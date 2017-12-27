@@ -1,0 +1,7 @@
+
+# image files
+*.qcow2
+*.raw
+
+# tarballs
+*.tar.*
