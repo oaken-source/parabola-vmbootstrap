@@ -2,6 +2,13 @@
 # image files
 *.qcow2
 *.raw
+*.img
 
 # tarballs
 *.tar.*
+
+# build dirs
+build/
+
+# generated ssh keys
+keys/*
