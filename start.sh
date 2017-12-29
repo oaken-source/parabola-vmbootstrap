@@ -2,7 +2,6 @@
 
 set -eu
 
-
 _builddir=build
 mkdir -p $_builddir
 
@@ -46,7 +45,7 @@ while ! ssh -p 2022 -i keys/id_rsa root@localhost $_sshopts true 2>/dev/null; do
 done && echo
 
 # open a session
-ssh -p 2022 -i keys/id_rsa root@localhost
+ssh -p 2022 -i keys/id_rsa parabola@localhost
 
 # shutdown the VM
 ssh -p 2022 -i keys/id_rsa root@localhost "nohup shutdown -h now &>/dev/null & exit"

@@ -58,6 +58,10 @@ mv /etc/pacman.conf{.pacnew,}
 pacman --noconfirm -Syuu
 
 pacman --noconfirm -S your-freedom
+
+userdel -r alarm
+useradd -mU parabola
+echo 'parabola:parabola' | chpasswd
 EOF
 chmod +x $_scriptfile
 

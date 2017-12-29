@@ -10,5 +10,8 @@
 # build dirs
 build/
 
+# fragments of running VM
+.boot/
+
 # generated ssh keys
 keys/*
