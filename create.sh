@@ -10,6 +10,7 @@ export ARCHTARBALL=${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}
 
 export _builddir=build
 mkdir -p $_builddir
+chown $(logname):$(logname) $_builddir
 
 export _outfile=$_builddir/$(basename $OUTFILE)
 

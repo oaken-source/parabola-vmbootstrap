@@ -34,7 +34,7 @@ chown -R parabola:parabola /home/parabola/{.gnupg,.ssh,.gitconfig}
 chmod 600 /home/parabola/.ssh/authorized_keys
 
 # install needed packages
-pacman --noconfirm -S libretools vim sudo rxvt-unicode-terminfo
+pacman --noconfirm -S libretools base-devel vim sudo rxvt-unicode-terminfo bash-completion
 
 # update configuration
 sed -i \
@@ -58,15 +58,43 @@ chown -R parabola:parabola /home/parabola/output
 # disable systemd-stdin hack...
 sed -i '/XXX: SYSTEMD-STDIN HACK/,+9d' /usr/bin/librechroot
 
-# setup work directories
-su - parabola -c createworkdir
-librechroot make
-
 # setup sudo
 cat > /etc/sudoers.d/parabola << IEOF
 # grant full permissions to user parabola
 parabola ALL=(ALL) NOPASSWD: ALL
 IEOF
+
+# setup work directories
+su - parabola -c createworkdir
+su - parabola -c "sudo librechroot make"
+
+# setup batch building
+pacman --noconfirm -S task-spooler
+
+cat >> /home/parabola/.bashrc << 'IEOF'
+
+alias sudo='sudo '
+
+function librespool() {
+  local cmd
+  printf -v cmd '%q ' "\$@"
+  tsp -d script --return --quiet --command "\$cmd" /dev/null
+}
+
+alias librechroot-spool='librespool sudo /usr/bin/librechroot'
+alias libremakepkg-spool='librespool sudo /usr/bin/libremakepkg'
+
+alias qbuild='if tsp | grep "\$(pwd)\\$" >/dev/null; then tspdel; fi && tsp echo \$(basename \$(pwd)) && librechroot-spool update && libremakepkg-spool && tsp -d librestage'
+
+alias tspdel='d=\$(tsp | grep "\$(pwd)\\$" | head -n1 | cut -d" " -f1) && for i in \$(seq \$d \$((\$d+3))); do tsp -r \$i; done'
+
+alias librecommit='if tsp | grep "\$(pwd)\\$" >/dev/null; then tspdel; fi && git commit -m "\$(pwd | rev | cut -d"/" -f1-2 | rev): updated to \$(bash -c "source PKGBUILD && echo \\\$pkgver")"'
+IEOF
+
+# enable UTF-8 locale
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+sed -i 's/LANG.*/LANG=en_US.UTF-8/' /etc/locale.conf
 EOF
 )
 chmod +x $_scriptfile
