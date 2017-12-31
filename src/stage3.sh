@@ -88,11 +88,13 @@ function librespool() {
 alias librechroot-spool='librespool sudo /usr/bin/librechroot'
 alias libremakepkg-spool='librespool sudo /usr/bin/libremakepkg'
 
-alias qbuild='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspdel; fi && tsp echo \$(basename \$(pwd)) && librechroot-spool update && libremakepkg-spool && tsp -d librestage'
+alias qbuild='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspr; fi && tsp echo \$(basename \$(pwd)) && librechroot-spool update && libremakepkg-spool && tsp -d librestage'
 
-alias tspdel='d=\$(tsp | grep " \$(basename \$(pwd))\\$" | head -n1 | cut -d" " -f1) && for i in \$(seq \$d \$((\$d+3))); do tsp -r \$i; done'
+alias tspr='d=\$(tsp | grep " \$(basename \$(pwd))\\$" | head -n1 | cut -d" " -f1) && for i in \$(seq \$d \$((\$d+3))); do tsp -r \$i; done'
+alias tspl='watch -n5 tsp'
+alias tspc='while tsp -c; do sleep 5; done'
 
-alias librecommit='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspdel; fi && git commit -m "\$(pwd | rev | cut -d"/" -f1-2 | rev): updated to \$(bash -c "source PKGBUILD && echo \\\$pkgver")"'
+alias librecommit='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspr; fi && git commit -m "\$(pwd | rev | cut -d"/" -f1-2 | rev): updated to \$(bash -c "source PKGBUILD && echo \\\$pkgver")"'
 IEOF
 
 # enable UTF-8 locale
