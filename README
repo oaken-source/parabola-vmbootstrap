@@ -1,0 +1,36 @@
+
+parabola-arm-imagebuilder
+=========================
+
+this is a collection of scripts creating parabola arm images for use with qemu
+with the goal of building parabola arm packages on these machines.
+
+to create a new virtual machine, run
+  $> sudo ./create.sh
+
+the creation script makes use of several files and packages present on already
+setup parabola development machines. if your setup is different, you might
+have to modify the scripts accordingly.
+
+Places the scripts check the host machine for configuration files are:
+  /etc/makepkg.conf - for PACKAGER and GPGKEY
+  ~/.gnupg ~/.ssh ~/.gitconfig - copied verbatim to the VM
+
+The scripts assume that the following programs are available and in $PATH:
+  qemu-img, qemu-system-arm
+  wget
+  parted
+  mkfs.vfat, mkfs.ext4
+  bsdtar
+  scp, ssh, ssh-keygen
+  pacman
+
+The scripts also assume that you like vim :)
+
+to open a shell into the created machine, run
+  $> ./start.sh [path to created image]
+
+you are logged in as user parabola with password parabola. passwordless sudo is
+setup and the package tree and a build chroot are prepared. have fun. also
+check out the .bashrc of the parabola user in the created virtual machine, for
+batch build integration based on task-spooler.
