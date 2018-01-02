@@ -24,10 +24,13 @@ _builddir=build
 mkdir -p $_builddir
 
 _imagefile=$1
-_pidfile=$_builddir/qemu.pid
+_pidfile=$_builddir/qemu-$$.pid
+_bootdir=$_builddir/boot-$$
 
 _loopdev=$(sudo losetup -f --show $_imagefile)
-_bootdir=.boot
+sudo partprobe $_loopdev
+_localport=$((2022 + $(find $_builddir -iname 'qemu-*.pid' | wc -l)))
+touch $_pidfile
 
 # register a cleanup error handler
 function cleanup {
@@ -50,7 +53,7 @@ QEMU_AUDIO_DRV=none qemu-system-arm \
   --append "root=/dev/mmcblk0p2 rw roottype=ext4 console=ttyAMA0" \
   -drive if=sd,driver=raw,cache=writeback,file=$_imagefile \
   -display none \
-  -net user,hostfwd=tcp::2022-:22 \
+  -net user,hostfwd=tcp::$_localport-:22 \
   -net nic \
   -daemonize \
   -snapshot \
@@ -58,15 +61,15 @@ QEMU_AUDIO_DRV=none qemu-system-arm \
 
 # wait for ssh to be up
 _sshopts="-o StrictHostKeyChecking=no -o ConnectTimeout=5"
-while ! ssh -p 2022 -i keys/id_rsa root@localhost $_sshopts true 2>/dev/null; do
+while ! ssh -p $_localport -i keys/id_rsa root@localhost $_sshopts true 2>/dev/null; do
   echo -n . && sleep 5
 done && echo
 
 # open a session
-ssh -p 2022 -i keys/id_rsa parabola@localhost
+ssh -p $_localport -i keys/id_rsa parabola@localhost
 
 # shutdown the VM
-ssh -p 2022 -i keys/id_rsa root@localhost "nohup shutdown -h now &>/dev/null & exit"
+ssh -p $_localport -i keys/id_rsa root@localhost "nohup shutdown -h now &>/dev/null & exit"
 while sudo kill -0 $(cat $_pidfile) 2> /dev/null; do echo -n . && sleep 5; done && echo
 rm -f $_pidfile
 
