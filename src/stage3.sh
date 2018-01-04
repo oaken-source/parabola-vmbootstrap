@@ -110,7 +110,7 @@ alias qbuild='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspr; fi
 
 alias tspr='d=\$(tsp | grep " \$(basename \$(pwd))\\$" | head -n1 | cut -d" " -f1) && for i in \$(seq \$d \$((\$d+3))); do tsp -r \$i; done'
 alias tspl='watch -n5 tsp'
-alias tspc='while tsp -c; do sleep 5; done'
+alias tspc='while tsp | grep -q running; do tsp -c; done'
 
 alias librecommit='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspr; fi && git commit -m "\$(pwd | rev | cut -d"/" -f1-2 | rev): updated to \$(bash -c "source PKGBUILD && echo \\\$pkgver")"'
 IEOF
