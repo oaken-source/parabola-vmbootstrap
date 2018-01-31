@@ -44,39 +44,47 @@ cat > $_scriptfile << 'EOF'
 
 set -eu
 
+# install the keyrings and mirrorlist
 sed -i 's/^SigLevel.*/SigLevel = Never/' /etc/pacman.conf
-
 pacman --noconfirm -U https://www.parabola.nu/packages/libre/any/parabola-keyring/download/
 pacman --noconfirm -U https://www.parabola.nu/packages/libre/any/archlinux32-keyring/download/
 pacman --noconfirm -U https://www.parabola.nu/packages/core/any/archlinux-keyring/download/
 pacman --noconfirm -U https://www.parabola.nu/packages/libre/any/pacman-mirrorlist/download/
 pacman --noconfirm -S archlinuxarm-keyring
-
 sed -i 's/^SigLevel.*/SigLevel = Required DatabaseOptional/' /etc/pacman.conf
 
+# update the keyring
 pacman-key --init
 pacman-key --populate archlinuxarm archlinux archlinux32 parabola
+pacman-key --refresh-keys
 
-test -f /etc/pacman.d/mirrorlist.pacnew && mv /etc/pacman.d/mirrorlist{.pacnew,}
+# install the mirrorlist
+[ -f /etc/pacman.d/mirrorlist.pacnew ] && mv /etc/pacman.d/mirrorlist{.pacnew,}
 
+# enable the [libre] and disable [alarm] in pacman.conf
 sed -i '/^\[core\]/i \
 [libre] \
 Include = /etc/pacman.d/mirrorlist \
 ' /etc/pacman.conf
 sed -Ei '/^\[alarm\]|\[aur\]/,+2d' /etc/pacman.conf
 
+# clear the pacman cache. all of it.
 yes | pacman -Scc
 
+# fix the architecture in /etc/pacman.conf
 sed -i 's/^Architecture.*/Architecture = armv7h/' /etc/pacman.conf
 
+# update the system to parabola
 pacman --noconfirm -Syy
-
 pacman --noconfirm -S pacman
 mv /etc/pacman.conf{.pacnew,}
 pacman --noconfirm -Syuu
-
 pacman --noconfirm -S your-freedom
 
+# FIXME: we should install the linux-libre kernel, but it won't boot in qemu yet
+# yes | pacman -S linux-libre
+
+# cleanup users
 userdel -r alarm
 useradd -mU parabola
 echo 'parabola:parabola' | chpasswd
@@ -91,7 +99,7 @@ QEMU_AUDIO_DRV=none qemu-system-arm \
   -m 1G \
   -dtb $_bootdir/dtbs/vexpress-v2p-ca9.dtb \
   -kernel $_bootdir/zImage \
-  --append "root=/dev/mmcblk0p2 rw roottype=ext4 console=ttyAMA0" \
+  --append "root=/dev/mmcblk0p3 rw roottype=ext4 console=ttyAMA0" \
   -drive if=sd,driver=raw,cache=writeback,file=$_outfile \
   -display none \
   -net user,hostfwd=tcp::2022-:22 \

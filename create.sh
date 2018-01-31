@@ -20,7 +20,12 @@
 
 set -eu
 
+die() { echo "$*" 1>&2 ; exit 1; }
+
 # this script prepares an armv7h parabola image for use with start.sh
+
+[ $(id -u) -ne 0 ] && die "must be root"
+[ -z "${SUDO_USER:-}" ] && die "SUDO_USER not set"
 
 export OUTFILE=${OUTFILE:-armv7h.img}
 export SIZE=${SIZE:-64G}
@@ -28,13 +33,14 @@ export ARCHTARBALL=${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}
 
 export _builddir=build
 mkdir -p $_builddir
-chown $(logname):$(logname) $_builddir
+chown $SUDO_USER $_builddir
 
 export _outfile=$_builddir/$(basename $OUTFILE)
 
 # prepare the empty image
 ./src/stage0.sh
 
+# FIXME: skip this step once parabola release images are available
 # install a clean archlinuxarm in the empty image
 ./src/stage1.sh
 
@@ -45,7 +51,7 @@ export _outfile=$_builddir/$(basename $OUTFILE)
 ./src/stage3.sh
 
 # cleanup
-chown $(logname) $_outfile
+chown $SUDO_USER $_outfile
 mv -v $_outfile $OUTFILE
 rm -rf $_builddir
 

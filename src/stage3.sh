@@ -52,7 +52,8 @@ chown -R parabola:parabola /home/parabola/{.gnupg,.ssh,.gitconfig}
 chmod 600 /home/parabola/.ssh/authorized_keys
 
 # install needed packages
-pacman --noconfirm -S libretools base-devel vim sudo rxvt-unicode-terminfo bash-completion
+pacman --noconfirm -S libretools base-devel vim sudo \
+  rxvt-unicode-terminfo bash-completion htop
 
 # update configuration
 sed -i \
@@ -106,13 +107,13 @@ function librespool() {
 alias librechroot-spool='librespool sudo /usr/bin/librechroot'
 alias libremakepkg-spool='librespool sudo /usr/bin/libremakepkg'
 
-alias qbuild='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspr; fi && tsp echo \$(basename \$(pwd)) && librechroot-spool update && libremakepkg-spool && tsp -d librestage'
+alias qbuild='if tsp | grep " \$(pwd)\\$" >/dev/null; then tspr; fi && tsp echo \$(pwd) && librechroot-spool update && libremakepkg-spool && tsp -d librestage'
 
-alias tspr='d=\$(tsp | grep " \$(basename \$(pwd))\\$" | head -n1 | cut -d" " -f1) && for i in \$(seq \$d \$((\$d+3))); do tsp -r \$i; done'
+alias tspr='d=\$(tsp | grep " \$(pwd)\\$" | head -n1 | cut -d" " -f1) && for i in \$(seq \$d \$((\$d+3))); do tsp -r \$i; done'
 alias tspl='watch -n5 tsp'
 alias tspc='while tsp | grep -q running; do tsp -c; done'
 
-alias librecommit='if tsp | grep " \$(basename \$(pwd))\\$" >/dev/null; then tspr; fi && git commit -m "\$(pwd | rev | cut -d"/" -f1-2 | rev): updated to \$(bash -c "source PKGBUILD && echo \\\$pkgver")"'
+alias librecommit='if tsp | grep " \$(pwd)\\$" >/dev/null; then tspr; fi && git commit -m "\$(pwd | rev | cut -d"/" -f1-2 | rev): updated to \$(bash -c "source PKGBUILD && echo \\\$pkgver")"'
 IEOF
 
 # enable UTF-8 locale
@@ -131,7 +132,7 @@ QEMU_AUDIO_DRV=none qemu-system-arm \
   -m 1G \
   -dtb $_bootdir/dtbs/vexpress-v2p-ca9.dtb \
   -kernel $_bootdir/zImage \
-  --append "root=/dev/mmcblk0p2 rw roottype=ext4 console=ttyAMA0" \
+  --append "root=/dev/mmcblk0p3 rw roottype=ext4 console=ttyAMA0" \
   -drive if=sd,driver=raw,cache=writeback,file=$_outfile \
   -display none \
   -net user,hostfwd=tcp::2022-:22 \
@@ -144,10 +145,10 @@ while ! ssh -p 2022 -i keys/id_rsa root@localhost -o StrictHostKeyChecking=no tr
   echo -n . && sleep 5
 done && echo
 
-# copy the current users keys keys to the VM
-scp -rP 2022 -i keys/id_rsa $(sudo -iu $(logname) pwd)/.gnupg root@localhost:/home/parabola/
-scp -rP 2022 -i keys/id_rsa $(sudo -iu $(logname) pwd)/.ssh root@localhost:/home/parabola/
-scp -rP 2022 -i keys/id_rsa $(sudo -iu $(logname) pwd)/.gitconfig root@localhost:/home/parabola/
+# copy the current users keys to the VM
+scp -rP 2022 -i keys/id_rsa $(sudo -iu $SUDO_USER pwd)/.gnupg root@localhost:/home/parabola/
+scp -rP 2022 -i keys/id_rsa $(sudo -iu $SUDO_USER pwd)/.ssh root@localhost:/home/parabola/
+scp -rP 2022 -i keys/id_rsa $(sudo -iu $SUDO_USER pwd)/.gitconfig root@localhost:/home/parabola/
 
 # copy and execute the migration script
 scp -P 2022 -i keys/id_rsa $_scriptfile root@localhost:

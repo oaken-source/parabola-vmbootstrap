@@ -45,12 +45,14 @@ trap cleanup ERR
 # start the VM
 mkdir -p $_bootdir
 sudo mount ${_loopdev}p1 $_bootdir
+# FIXME: archlinuxarm rust will SIGILL on cortex-a9 cpus, using cortex-a15 for now
 QEMU_AUDIO_DRV=none qemu-system-arm \
   -M vexpress-a9 \
+  -cpu cortex-a15 \
   -m 1G \
   -dtb $_bootdir/dtbs/vexpress-v2p-ca9.dtb \
   -kernel $_bootdir/zImage \
-  --append "root=/dev/mmcblk0p2 rw roottype=ext4 console=ttyAMA0" \
+  --append "root=/dev/mmcblk0p3 rw roottype=ext4 console=ttyAMA0" \
   -drive if=sd,driver=raw,cache=writeback,file=$_imagefile \
   -display none \
   -net user,hostfwd=tcp::$_localport-:22 \
@@ -59,7 +61,8 @@ QEMU_AUDIO_DRV=none qemu-system-arm \
   -snapshot \
   -pidfile $_pidfile
 
-# wait for ssh to be up
+
+  # wait for ssh to be up
 _sshopts="-o StrictHostKeyChecking=no -o ConnectTimeout=5"
 while ! ssh -p $_localport -i keys/id_rsa root@localhost $_sshopts true 2>/dev/null; do
   echo -n . && sleep 5
