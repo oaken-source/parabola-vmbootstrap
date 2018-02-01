@@ -20,26 +20,26 @@
 
 set -eu
 
-_scriptfile=$_builddir/migrate.sh
-_pidfile=$_builddir/qemu.pid
+_scriptfile="$_builddir"/migrate.sh
+_pidfile="$_builddir"/qemu-$$.pid
+_bootdir="$_builddir"/boot-$$
 
 _loopdev=$(sudo losetup -f --show $_outfile)
-_bootdir=.boot
 
 # register cleanup handler to stop the started VM
 function cleanup {
-  test -f $_pidfile && (kill -9 $(cat $_pidfile) || true)
-  rm -f $_pidfile
+  test -f "$_pidfile" && (kill -9 $(cat "$_pidfile") || true)
+  rm -f "$_pidfile"
   umount ${_loopdev}p1
   losetup -d $_loopdev
-  rm -rf $_bootdir
-  rm -f $_scriptfile
+  rm -rf "$_bootdir"
+  rm -f "$_scriptfile"
 }
 trap cleanup ERR
 
 # create the migration script, adapted from
 # https://wiki.parabola.nu/Migration_from_Arch_ARM
-cat > $_scriptfile << 'EOF'
+cat > "$_scriptfile" << 'EOF'
 #!/bin/bash
 
 set -eu
@@ -80,32 +80,39 @@ pacman --noconfirm -S pacman
 mv /etc/pacman.conf{.pacnew,}
 pacman --noconfirm -Syuu
 pacman --noconfirm -S your-freedom
-
-# FIXME: we should install the linux-libre kernel, but it won't boot in qemu yet
-# yes | pacman -S linux-libre
+yes | pacman -S linux-libre
 
 # cleanup users
 userdel -r alarm
 useradd -mU parabola
 echo 'parabola:parabola' | chpasswd
+echo 'root:parabola' | chpasswd
+
+# cleanup hostname
+echo "parabola-arm" > /etc/hostname
+
+# enable UTF-8 locale
+sed -i 's/#en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen
+locale-gen
+sed -i 's/LANG.*/LANG=en_US.UTF-8/' /etc/locale.conf
 EOF
-chmod +x $_scriptfile
+chmod +x "$_scriptfile"
 
 # start the VM
-mkdir -p $_bootdir
+mkdir -p "$_bootdir"
 mount ${_loopdev}p1 $_bootdir
 QEMU_AUDIO_DRV=none qemu-system-arm \
   -M vexpress-a9 \
   -m 1G \
-  -dtb $_bootdir/dtbs/vexpress-v2p-ca9.dtb \
-  -kernel $_bootdir/zImage \
+  -dtb "$_bootdir"/dtbs/vexpress-v2p-ca9.dtb \
+  -kernel "$_bootdir"/zImage \
   --append "root=/dev/mmcblk0p3 rw roottype=ext4 console=ttyAMA0" \
-  -drive if=sd,driver=raw,cache=writeback,file=$_outfile \
+  -drive if=sd,driver=raw,cache=writeback,file="$_outfile" \
   -display none \
   -net user,hostfwd=tcp::2022-:22 \
   -net nic \
   -daemonize \
-  -pidfile $_pidfile
+  -pidfile "$_pidfile"
 
 # wait for ssh to be up
 while ! ssh -p 2022 -i keys/id_rsa root@localhost -o StrictHostKeyChecking=no true 2>/dev/null; do
@@ -113,16 +120,14 @@ while ! ssh -p 2022 -i keys/id_rsa root@localhost -o StrictHostKeyChecking=no tr
 done && echo
 
 # copy and execute the migration script
-scp -P 2022 -i keys/id_rsa $_scriptfile root@localhost:
-ssh -p 2022 -i keys/id_rsa root@localhost "./$(basename $_scriptfile)"
+scp -P 2022 -i keys/id_rsa "$_scriptfile" root@localhost:
+ssh -p 2022 -i keys/id_rsa root@localhost "./$(basename "$_scriptfile")"
 
 # stop the VM
 ssh -p 2022 -i keys/id_rsa root@localhost "nohup shutdown -h now &>/dev/null & exit"
-while kill -0 $(cat $_pidfile) 2> /dev/null; do echo -n . && sleep 5; done && echo
-rm -f $_pidfile
+while kill -0 $(cat "$_pidfile") 2> /dev/null; do echo -n . && sleep 5; done && echo
 
 # cleanup
 umount ${_loopdev}p1
 losetup -d $_loopdev
-rm -rf $_bootdir
-rm $_scriptfile
+rm -rf "$_bootdir" "$_scriptfile" "$_pidfile"

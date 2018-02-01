@@ -20,8 +20,10 @@
 
 set -eu
 
-# setup an available loop device
-_loopdev=$(losetup -f --show $_outfile)
+_bootdir="$_builddir/boot"
+_rootdir="$_builddir/root"
+
+_loopdev=$(losetup -f --show "$_outfile")
 
 # setup an error exit handler for cleanup
 function cleanup {
@@ -30,8 +32,8 @@ function cleanup {
     umount $_loopdev$part || true
   done
   losetup -d $_loopdev || true
-  rm -rf $_builddir/boot $_builddir/root
-  rm -f $_outfile
+  rm -rf "$_bootdir" "$_rootdir"
+  rm -f "$_outfile"
 }
 trap cleanup ERR
 
@@ -56,16 +58,16 @@ mkswap ${_loopdev}p2
 mkfs.ext4 ${_loopdev}p3
 
 # install the base image
-mkdir -p $_builddir/boot
-mkdir $_builddir/root
-mount ${_loopdev}p1 $_builddir/boot
-mount ${_loopdev}p3 $_builddir/root
-bsdtar -vxpf $ARCHTARBALL -C $_builddir/root
+mkdir -p "$_bootdir"
+mkdir -p "$_rootdir"
+mount ${_loopdev}p1 "$_bootdir"
+mount ${_loopdev}p3 "$_rootdir"
+bsdtar -vxpf $ARCHTARBALL -C "$_rootdir"
 sync
 
 # fill the boot partition and create fstab
-mv -v $_builddir/root/boot/* $_builddir/boot
-cat >> $_builddir/root/etc/fstab << EOF
+mv -v "$_rootdir"/boot/* "$_bootdir"
+cat >> "$_rootdir"/etc/fstab << EOF
 /dev/mmcblk0p1  /boot   vfat    defaults        0       0
 /dev/mmcblk0p2  none    swap    defaults        0       0
 EOF
@@ -74,16 +76,16 @@ EOF
 mkdir -p keys
 test -f keys/id_rsa || ssh-keygen -N '' -f keys/id_rsa
 chown $SUDO_USER keys/id_rsa*
-mkdir -m 700 $_builddir/root/root/.ssh
-install -m 600 -o 0 -g 0 keys/id_rsa.pub $_builddir/root/root/.ssh/authorized_keys
+mkdir -m 700 "$_rootdir"/root/.ssh
+install -m 600 -o 0 -g 0 keys/id_rsa.pub "$_rootdir"/root/.ssh/authorized_keys
 
 # create and install ssh host keys
 for cipher in dsa ecdsa ed25519 rsa; do
   if [ ! -f keys/ssh_host_${cipher}_key ]; then
     ssh-keygen -N '' -t ${cipher} -f keys/ssh_host_${cipher}_key
   fi
-  install -m 600 -o 0 -g 0 keys/ssh_host_${cipher}_key $_builddir/root/etc/ssh
-  install -m 644 -o 0 -g 0 keys/ssh_host_${cipher}_key.pub $_builddir/root/etc/ssh
+  install -m 600 -o 0 -g 0 keys/ssh_host_${cipher}_key "$_rootdir"/etc/ssh
+  install -m 644 -o 0 -g 0 keys/ssh_host_${cipher}_key.pub "$_rootdir"/etc/ssh
 done
 
 # tie up any loose ends
@@ -91,4 +93,4 @@ for part in p1 p3; do
   umount $_loopdev$part
 done
 losetup -d $_loopdev
-rm -rf $_builddir/boot $_builddir/root
+rm -rf "$_bootdir" "$_rootdir"

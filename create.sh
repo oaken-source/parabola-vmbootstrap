@@ -27,15 +27,15 @@ die() { echo "$*" 1>&2 ; exit 1; }
 [ $(id -u) -ne 0 ] && die "must be root"
 [ -z "${SUDO_USER:-}" ] && die "SUDO_USER not set"
 
-export OUTFILE=${OUTFILE:-armv7h.img}
-export SIZE=${SIZE:-64G}
-export ARCHTARBALL=${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}
+export OUTFILE="${OUTFILE:-armv7h.img}"
+export SIZE="${SIZE:-64G}"
+export ARCHTARBALL="${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}"
 
 export _builddir=build
-mkdir -p $_builddir
-chown $SUDO_USER $_builddir
+mkdir -p "$_builddir"
+chown $SUDO_USER "$_builddir"
 
-export _outfile=$_builddir/$(basename $OUTFILE)
+export _outfile="$_builddir/$(basename "$OUTFILE")"
 
 # prepare the empty image
 ./src/stage0.sh
@@ -48,11 +48,11 @@ export _outfile=$_builddir/$(basename $OUTFILE)
 ./src/stage2.sh
 
 # setup package development environment
-./src/stage3.sh
+[ -n "${DEVSETUP:-}" ] && ./src/stage3.sh
 
 # cleanup
 chown $SUDO_USER $_outfile
-mv -v $_outfile $OUTFILE
-rm -rf $_builddir
+mv -v "$_outfile" "$OUTFILE"
+rm -rf "$_builddir"
 
 echo "all done :)"
