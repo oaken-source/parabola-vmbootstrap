@@ -19,47 +19,34 @@
  ##############################################################################
 
 set -eu
+set -x
 
 die() { echo "$*" 1>&2 ; exit 1; }
 
-# this script prepares an armv7h parabola image for use with start.sh
+_tarball=$1
 
-[ $(id -u) -ne 0 ] && die "must be root"
-[ -z "${SUDO_USER:-}" ] && die "SUDO_USER not set"
+# parse date from tarball
+_date=$(echo "${_tarball%.tar.gz}" | rev | cut -d'-' -f1-3 | rev)
 
-export OUTFILE="${OUTFILE:-armv7h.img}"
-export SIZE="${SIZE:-64G}"
-export ARCHTARBALL="${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}"
-export PARABOLATARBALL="${PARABOLATARBALL:-ParabolaARM-armv7-latest.tar.gz}"
+# create checksums
+sha512sum $_tarball > SHA512SUMS
+whirlpool-hash $_tarball > WHIRLPOOLSUMS
 
-export _builddir=build
-mkdir -p "$_builddir"
-chown $SUDO_USER "$_builddir"
+# sign tarball and checksum
+gpg --detach-sign $_tarball
+gpg --detach-sign SHA512SUMS
+gpg --detach-sign WHIRLPOOLSUMS
 
-export _outfile="$_builddir/$(basename "$OUTFILE")"
+# upload tarball and checksum
+_repopath="/srv/repo/main/iso/arm/$_date"
+ssh repo@repo "mkdir -p $_repopath"
+scp $_tarball{,.sig} SHA512SUMS{,.sig} WHIRLPOOLSUMS{,.sig} repo@repo:$_repopath/
 
-# prepare the empty image
-./src/stage0.sh
-
-if [ -z "${NOBOOTSTRAP:-}" ]; then
-  # install a clean archlinux-arm system in the empty image
-  wget -nc http://os.archlinuxarm.org/os/$ARCHTARBALL
-  TARBALL="$ARCHTARBALL" ./src/stage1.sh
-
-  # migrate the installed image to a clean parabola
-  ./src/stage2.sh
-else
-  # install a clean parabola-arm system in the empty image
-  wget -nc https://repo.parabola.nu/iso/arm/LATEST/$PARABOLATARBALL
-  TARBALL="$PARABOLATARBALL" ./src/stage1.sh
-fi
-
-# setup package development environment
-[ -n "${DEVSETUP:-}" ] && ./src/stage3.sh
+# update LATEST symlinks
+ssh repo@repo "mkdir -p $_repopath/../LATEST"
+for f in $_tarball{,.sig} SHA512SUMS{,.sig} WHIRLPOOLSUMS{,.sig}; do
+  ssh repo@repo "ln -fs ../$_date/$f $_repopath/../LATEST/$(echo $f | sed "s/$_date/LATEST/g")"
+done
 
 # cleanup
-chown $SUDO_USER $_outfile
-mv -v "$_outfile" "$OUTFILE"
-rm -rf "$_builddir"
-
-echo "all done :)"
+rm -rf $_tarball.sig SHA512SUMS{,.sig} WHIRLPOOLSUMS{,.sig}
