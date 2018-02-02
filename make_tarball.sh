@@ -27,7 +27,8 @@ die() { echo "$*" 1>&2 ; exit 1; }
 _builddir=build
 mkdir -p "$_builddir"
 
-_imagefile=$1
+_imagefile="$_builddir/$(basename "$1")"
+cp $1 $_imagefile
 _rootdir="$_builddir"/root-$$
 
 _loopdev=$(sudo losetup -f --show "$_imagefile")
@@ -38,20 +39,29 @@ function cleanup {
   sudo umount ${_loopdev}p1
   sudo umount ${_loopdev}p3
   sudo losetup -d $_loopdev
-  rm -rf "$_rootdir"
+  rm -rf "$_rootdir" "$_imagefile"
 }
 trap cleanup ERR
 
 # mount the image
 mkdir -p "$_rootdir"
-sudo mount -o ro ${_loopdev}p3 "$_rootdir"
-sudo mount -o ro ${_loopdev}p1 "$_rootdir"/boot
+sudo mount ${_loopdev}p3 "$_rootdir"
+sudo mount ${_loopdev}p1 "$_rootdir"/boot
 
+# clean the image
+rm -fvr \
+  "$_rootdir"/root/.ssh \
+  "$_rootdir"/etc/ssh/ssh_host_* \
+  "$_rootdir"/etc/pacman.d/gnupg \
+  "$_rootdir"/var/log/* \
+  "$_rootdir"/var/cache/* \
+  "$_rootdir"/lost+found
+
+# create the tarball
 tar -czf ParabolaARM-armv7-$(date "+%Y-%m-%d").tar.gz -C "$_rootdir" .
 
 # cleanup
 sudo umount ${_loopdev}p1
 sudo umount ${_loopdev}p3
 sudo losetup -d $_loopdev
-rm -rf "$_rootdir"
-
+rm -rf "$_rootdir" "$_imagefile"

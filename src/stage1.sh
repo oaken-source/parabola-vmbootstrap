@@ -37,9 +37,6 @@ function cleanup {
 }
 trap cleanup ERR
 
-# fetch latest archlinuxarm tarball
-wget -nc http://os.archlinuxarm.org/os/$ARCHTARBALL
-
 # the following installation instructions are adapted from
 # https://archlinuxarm.org/platforms/armv7/arm/versatile-express
 
@@ -62,7 +59,7 @@ mkdir -p "$_bootdir"
 mkdir -p "$_rootdir"
 mount ${_loopdev}p1 "$_bootdir"
 mount ${_loopdev}p3 "$_rootdir"
-bsdtar -vxpf $ARCHTARBALL -C "$_rootdir"
+bsdtar -vxpf $TARBALL -C "$_rootdir"
 sync
 
 # fill the boot partition and create fstab

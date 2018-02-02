@@ -30,6 +30,7 @@ die() { echo "$*" 1>&2 ; exit 1; }
 export OUTFILE="${OUTFILE:-armv7h.img}"
 export SIZE="${SIZE:-64G}"
 export ARCHTARBALL="${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}"
+export PARABOLATARBALL="${PARABOLATARBALL:-ParabolaARM-armv7-latest.tar.gz}"
 
 export _builddir=build
 mkdir -p "$_builddir"
@@ -40,12 +41,18 @@ export _outfile="$_builddir/$(basename "$OUTFILE")"
 # prepare the empty image
 ./src/stage0.sh
 
-# FIXME: skip this step once parabola release images are available
-# install a clean archlinuxarm in the empty image
-./src/stage1.sh
+if [ -z "${NOBOOTSTRAP:-}" ]; then
+  # install a clean archlinux-arm system in the empty image
+  wget -nc http://os.archlinuxarm.org/os/$ARCHTARBALL
+  TARBALL="$ARCHTARBALL" ./src/stage1.sh
 
-# migrate the installed image to a clean parabola
-./src/stage2.sh
+  # migrate the installed image to a clean parabola
+  ./src/stage2.sh
+else
+  # install a clean parabola-arm system in the empty image
+  # FIXME: add download link for released parabola tarballs here
+  TARBALL="$PARABOLATARBALL" ./src/stage1.sh
+fi
 
 # setup package development environment
 [ -n "${DEVSETUP:-}" ] && ./src/stage3.sh
