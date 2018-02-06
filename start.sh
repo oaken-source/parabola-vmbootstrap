@@ -51,7 +51,7 @@ _memory="1G"
 _snapshot=""
 [ -z "${PERSISTENT:-}" ] && _snapshot="-snapshot"
 _daemonize="-nographic -serial mon:stdio"
-[ -z "${FOREGROUND:-}" ] && _daemonize="-daemonize -pidfile \"$_pidfile\" -net user,hostfwd=tcp::2022-:22 -net nic -display none"
+[ -z "${FOREGROUND:-}" ] && _daemonize="-daemonize -pidfile $_pidfile -net user,hostfwd=tcp::2022-:22 -net nic -display none"
 if [ -f "$_bootdir"/zImage ]; then
   _kernel="$_bootdir"/zImage
   _dtb="$_bootdir"/dtbs/vexpress-v2p-ca9.dtb
