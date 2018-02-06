@@ -46,8 +46,8 @@ parted -s $_loopdev \
   mklabel gpt \
   mkpart ESP fat32 1MiB 513MiB \
   set 1 boot on \
-  mkpart primary linux-swap 513MiB 1537MiB \
-  mkpart primary ext4 1537MiB 100%
+  mkpart primary linux-swap 513MiB 4609MiB \
+  mkpart primary ext4 4609MiB 100%
 
 # create filesystems
 mkfs.vfat -F 32 ${_loopdev}p1

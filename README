@@ -13,16 +13,14 @@ tarballs.
 to create a new virtual machine image, run
   $> sudo ./create.sh
 
-by default, the creation script will perform a full bootstrap, installing an
-archlinuxarm release tarball and migrating the installed system to parabola
-in-place. This behaviour can be changed by setting the environment variable
-NOBOOTSTRAP to 1:
+by default, the creation script will use a ParabolaArm release tarball to
+create the virtual machine.  Alternatively, to install an archlinuxarm tarball
+and migrating the installed system to parabola in-place, set the environment
+variable ARCHBOOTSTRAP to 1:
 
-  $> sudo NOBOOTSTRAP=1 ./create.sh
+  $> sudo ARCHBOOTSTRAP=1 ./create.sh
 
-In this case, a parabola arm release tarball is used instead.
-
-optionally, to create a new virtual machine with a packaging environment, set
+Optionally, to create a new virtual machine with a packaging environment, set
 the environment variable DEVSETUP to 1:
 
   $> sudo DEVSETUP=1 ./create.sh

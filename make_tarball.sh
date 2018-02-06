@@ -52,7 +52,6 @@ sudo mount ${_loopdev}p1 "$_rootdir"/boot
 rm -fvr \
   "$_rootdir"/root/.ssh \
   "$_rootdir"/etc/ssh/ssh_host_* \
-  "$_rootdir"/etc/pacman.d/gnupg \
   "$_rootdir"/var/log/* \
   "$_rootdir"/var/cache/* \
   "$_rootdir"/lost+found

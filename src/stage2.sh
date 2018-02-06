@@ -78,7 +78,7 @@ sed -i 's/^Architecture.*/Architecture = armv7h/' /etc/pacman.conf
 pacman --noconfirm -Syy
 pacman --noconfirm -S pacman
 mv /etc/pacman.conf{.pacnew,}
-pacman --noconfirm -Syuu
+pacman --noconfirm -Syyuu
 pacman --noconfirm -S your-freedom
 yes | pacman -S linux-libre
 

@@ -30,7 +30,7 @@ die() { echo "$*" 1>&2 ; exit 1; }
 export OUTFILE="${OUTFILE:-armv7h.img}"
 export SIZE="${SIZE:-64G}"
 export ARCHTARBALL="${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}"
-export PARABOLATARBALL="${PARABOLATARBALL:-ParabolaARM-armv7-latest.tar.gz}"
+export PARABOLATARBALL="${PARABOLATARBALL:-ParabolaARM-armv7-LATEST.tar.gz}"
 
 export _builddir=build
 mkdir -p "$_builddir"
@@ -41,7 +41,7 @@ export _outfile="$_builddir/$(basename "$OUTFILE")"
 # prepare the empty image
 ./src/stage0.sh
 
-if [ -z "${NOBOOTSTRAP:-}" ]; then
+if [ -n "${ARCHBOOTSTRAP:-}" ]; then
   # install a clean archlinux-arm system in the empty image
   wget -nc http://os.archlinuxarm.org/os/$ARCHTARBALL
   TARBALL="$ARCHTARBALL" ./src/stage1.sh
