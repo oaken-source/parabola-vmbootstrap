@@ -57,10 +57,10 @@ pacman --noconfirm -S libretools base-devel vim sudo \
 
 # update configuration
 sed -i \
-    -e 's_^#PKGDEST.*_PKGDEST="/home/parabola/output/packages_' \
-    -e 's_^#SRCDEST.*_SRCDEST="/home/parabola/output/sources_' \
-    -e 's_^#SRCPKGDEST.*_SRCPKGDEST="/home/parabola/output/srcpackages_' \
-    -e 's_^#LOGDEST.*_LOGDEST="/home/parabola/output/makepkglogs_' \
+    -e 's_^#PKGDEST.*_PKGDEST="/home/parabola/output/packages"_' \
+    -e 's_^#SRCDEST.*_SRCDEST="/home/parabola/output/sources"_' \
+    -e 's_^#SRCPKGDEST.*_SRCPKGDEST="/home/parabola/output/srcpackages"_' \
+    -e 's_^#LOGDEST.*_LOGDEST="/home/parabola/output/makepkglogs"_' \
     -e 's_^#PACKAGER.*_PACKAGER="$PACKAGER"_' \
     -e 's_^#GPGKEY.*_GPGKEY="$GPGKEY"_' \
   /etc/makepkg.conf
