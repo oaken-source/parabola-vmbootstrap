@@ -1,8 +1,8 @@
 #!/bin/bash
  ##############################################################################
- #                       parabola-arm-imagebuilder                            #
+ #                         parabola-imagebuilder                              #
  #                                                                            #
- #    Copyright (C) 2017  Andreas Grapentin                                   #
+ #    Copyright (C) 2017, 2018  Andreas Grapentin                             #
  #                                                                            #
  #    This program is free software: you can redistribute it and/or modify    #
  #    it under the terms of the GNU General Public License as published by    #
@@ -18,48 +18,30 @@
  #    along with this program.  If not, see <http://www.gnu.org/licenses/>.   #
  ##############################################################################
 
-set -eu
-
-die() { echo "$*" 1>&2 ; exit 1; }
-
-# this script prepares an armv7h parabola image for use with start.sh
-
-[ $(id -u) -ne 0 ] && die "must be root"
-[ -z "${SUDO_USER:-}" ] && die "SUDO_USER not set"
-
-export OUTFILE="${OUTFILE:-armv7h.img}"
+# target options
+export ARCH="${ARCH:-armv7h}"
 export SIZE="${SIZE:-64G}"
-export ARCHTARBALL="${ARCHTARBALL:-ArchLinuxARM-armv7-latest.tar.gz}"
-export PARABOLATARBALL="${PARABOLATARBALL:-ParabolaARM-armv7-LATEST.tar.gz}"
+export MIRROR="${MIRROR:-https://redirector.parabola.nu/\$repo/os/\$arch}"
 
-export _builddir=build
-mkdir -p "$_builddir"
-chown $SUDO_USER "$_builddir"
+# common directories
+startdir="$(pwd)"
+export TOPBUILDDIR="$startdir"/build
+export TOPSRCDIR="$startdir"/src
+mkdir -p "$TOPBUILDDIR"
+chown "$SUDO_USER" "$TOPBUILDDIR"
 
-export _outfile="$_builddir/$(basename "$OUTFILE")"
+# shellcheck source=src/shared/common.sh
+. "$TOPSRCDIR"/shared/common.sh
 
-# prepare the empty image
-./src/stage0.sh
-
-if [ -n "${ARCHBOOTSTRAP:-}" ]; then
-  # install a clean archlinux-arm system in the empty image
-  wget -nc http://os.archlinuxarm.org/os/$ARCHTARBALL
-  TARBALL="$ARCHTARBALL" ./src/stage1.sh
-
-  # migrate the installed image to a clean parabola
-  ./src/stage2.sh
-else
-  # install a clean parabola-arm system in the empty image
-  wget -nc https://repo.parabola.nu/iso/arm/LATEST/$PARABOLATARBALL
-  TARBALL="$PARABOLATARBALL" ./src/stage1.sh
+# sanity checks
+if [ "$(id -u)" -ne 0 ]; then
+  die -e "$ERROR_INVOCATION" "must be root"
 fi
 
-# setup package development environment
-[ -n "${DEVSETUP:-}" ] && ./src/stage3.sh
+# shellcheck source=src/qemu.sh
+. "$TOPSRCDIR"/qemu.sh
 
-# cleanup
-chown $SUDO_USER $_outfile
-mv -v "$_outfile" "$OUTFILE"
-rm -rf "$_builddir"
+qemu_make_image "$TOPBUILDDIR/parabola-$ARCH.img" "$SIZE" \
+  || die "failed to prepare qemu base image"
 
-echo "all done :)"
+msg "all done."

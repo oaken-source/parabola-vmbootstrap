@@ -1,8 +1,8 @@
 #!/bin/bash
  ##############################################################################
- #                       parabola-arm-imagebuilder                            #
+ #                         parabola-imagebuilder                              #
  #                                                                            #
- #    Copyright (C) 2017  Andreas Grapentin                                   #
+ #    Copyright (C) 2018  Andreas Grapentin                                   #
  #                                                                            #
  #    This program is free software: you can redistribute it and/or modify    #
  #    it under the terms of the GNU General Public License as published by    #
@@ -18,49 +18,34 @@
  #    along with this program.  If not, see <http://www.gnu.org/licenses/>.   #
  ##############################################################################
 
-set -eu
+# error codes
+export ERROR_UNSPECIFIED=1
+export ERROR_INVOCATION=2
+export ERROR_MISSING=3
+export ERROR_BUILDFAIL=4
+export ERROR_KEYFAIL=5
 
-die() { echo "$*" 1>&2 ; exit 1; }
-
-[ $(id -u) -ne 0 ] && die "must be root"
-
-_builddir=build
-mkdir -p "$_builddir"
-
-_imagefile="$_builddir/$(basename "$1")"
-cp $1 $_imagefile
-_rootdir="$_builddir"/root-$$
-
-_loopdev=$(sudo losetup -f --show "$_imagefile")
-sudo partprobe $_loopdev
-
-# register a cleanup error handler
-function cleanup {
-  sudo umount ${_loopdev}p1
-  sudo umount ${_loopdev}p3
-  sudo losetup -d $_loopdev
-  rm -rf "$_rootdir" "$_imagefile"
+# messaging functions
+msg() {
+  echo "$(tput bold)$(tput setf 2)==>$(tput setf 7) $*$(tput sgr0)";
 }
-trap cleanup ERR
 
-# mount the image
-mkdir -p "$_rootdir"
-sudo mount ${_loopdev}p3 "$_rootdir"
-sudo mount ${_loopdev}p1 "$_rootdir"/boot
+error() {
+  echo "$(tput bold)$(tput setf 4)==> ERROR:$(tput setf 7) $*$(tput sgr0)" 1>&2
+}
 
-# clean the image
-rm -fvr \
-  "$_rootdir"/root/.ssh \
-  "$_rootdir"/etc/ssh/ssh_host_* \
-  "$_rootdir"/var/log/* \
-  "$_rootdir"/var/cache/* \
-  "$_rootdir"/lost+found
+die() {
+  local OPTIND o e="$ERROR_UNSPECIFIED"
+  while getopts "e:" o; do
+    case "$o" in
+      e) e="$OPTARG" ;;
+      *) die -e "$ERROR_INVOCATION" "Usage: ${FUNCNAME[0]} [-e status] msg ..." ;;
+    esac
+  done
+  shift $((OPTIND-1))
 
-# create the tarball
-tar -czf ParabolaARM-armv7-$(date "+%Y-%m-%d").tar.gz -C "$_rootdir" .
-
-# cleanup
-sudo umount ${_loopdev}p1
-sudo umount ${_loopdev}p3
-sudo losetup -d $_loopdev
-rm -rf "$_rootdir" "$_imagefile"
+  error "$@"
+  trap - ERR
+  exit "$e"
+}
+trap 'die "unknown error"' ERR

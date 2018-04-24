@@ -1,88 +1,34 @@
 
-parabola-arm-imagebuilder
-=========================
+parabola-imagebuilder
+=====================
+
+This is a collection of scripts creating parabola images for use with qemu.
 
 image creation
 --------------
 
-this is a collection of scripts creating parabola arm images for use with qemu
-with the original goal of building parabola arm packages on these machines.
-Development focus has since shifted towards creating parabola-arm release
-tarballs.
-
-to create a new virtual machine image, run
+To create a new virtual machine image, run
   $> sudo ./create.sh
 
-by default, the creation script will use a ParabolaArm release tarball to
-create the virtual machine.  Alternatively, to install an archlinuxarm tarball
-and migrating the installed system to parabola in-place, set the environment
-variable ARCHBOOTSTRAP to 1:
+The creation is influenced by the following environment variables:
 
-  $> sudo ARCHBOOTSTRAP=1 ./create.sh
+ ARCH - the target architecture of the image. default: armv7h
 
-Optionally, to create a new virtual machine with a packaging environment, set
-the environment variable DEVSETUP to 1:
+ SIZE - the size of the root image. default: 64GiB
 
-  $> sudo DEVSETUP=1 ./create.sh
+ MIRROR - the mirror used to pacstrap the image, anything valid in a `Server =`
+          line can go here.
+          default: https://redirector.parabola.nu/\$repo/os/\$arch}
 
-The packaging environment setup script makes use of several files and packages
-present on already setup parabola development machines. if your setup is
-different, you might have to modify src/stage3.sh accordingly.
+The created images are stored in the build/ directory.
 
-Places the scripts check the host machine for configuration files are:
-  /etc/makepkg.conf - for PACKAGER and GPGKEY
-  ~/.gnupg ~/.ssh ~/.gitconfig - copied verbatim to the VM
-
-The scripts assume that the following programs are available and in $PATH:
-  qemu-img, qemu-system-arm
-  wget
-  parted
-  mkfs.vfat, mkfs.ext4, mkswap
-  bsdtar
-  scp, ssh, ssh-keygen
-  pacman
-
-The scripts also assume that you like vim :)
 
 virtual machine start
 ---------------------
 
-to open a shell into the created machine, run
-  $> ./start.sh [path to created image]
+To boot a created virtual machine, run
+  $> sudo ./boot.sh [path to created image]
 
-the start.sh script assumes that you want a throwaway session, so it will start
-the virtual machine in snapshot mode and drop you into an ssh session. Once you
-exit that session, the machine is shutdown and changes made to the image are
-discarded. This behavior can be changed using the following environment
-variables:
-
-  FOREGROUND : set this to 1 to start a qemu serial connection instead of a ssh
-               session. Useful to capture boot output.
-
-  PERSISTENT : set this to 1 to make persistent changes to the image that are
-               not discarded on shutdown.
-
-The username and password for the created image is parabola:parabola, or
-root:parabola respectively. If a packaging environment is setup, the system is
-configured for passwordless sudo for the parabola user and the package tree and
-a build chroot are prepared. have fun. also check out the .bashrc of the
-parabola user in the created virtual machine, for batch build integration based
-on task-spooler.
-
-tarball creation
-----------------
-
-to create a tarball from the created vm image, run
-
-  $> sudo ./make_tarball.sh [path to created image]
-
-the tarball creation script assumes to operate on an image *without* packaging
-environment setup and will not perform additional cleanup operations if used on
-the wrong image. Things that are cleaned up are:
-
-  /root/.ssh
-  /etc/ssh/ssh_host_*
-  /etc/pacman.d/gnupg
-  /var/log/*
-  /var/cache/*
-  /lost+found
+The start.sh script assumes that you want a throwaway session, so it will start
+the virtual machine in snapshot mode, and changes during the session will be
+discarded.
