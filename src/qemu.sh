@@ -1,6 +1,6 @@
 #!/bin/bash
  ##############################################################################
- #                       parabola-arm-imagebuilder                            #
+ #                         parabola-imagebuilder                              #
  #                                                                            #
  #    Copyright (C) 2018  Andreas Grapentin                                   #
  #                                                                            #
@@ -104,6 +104,16 @@ qemu_cleanup_user_static() {
   rm -f "$1"/usr/bin/qemu-*
 }
 
+qemu_img_finalize_for_arm() {
+  true
+}
+
+qemu_img_finalize_for_riscv64() {
+  # for the time being, use fedora bbl to boot
+  wget https://fedorapeople.org/groups/risc-v/disk-images/bbl \
+    -O "$1"/boot/bbl
+}
+
 qemu_make_image() {
   msg "preparing parabola qemu image for $ARCH"
 
@@ -144,6 +154,8 @@ EOF
     qemu_setup_user_static "$TOPBUILDDIR"/mnt || return
 
     pacstrap -GMcd -C "$TOPBUILDDIR/pacman.conf.$ARCH" "$TOPBUILDDIR"/mnt || return
+
+    "qemu_img_finalize_for_$ARCH" "$TOPBUILDDIR"/mnt || return
   ) || return
 
   mv "$tmpfile" "$1"

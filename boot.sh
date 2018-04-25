@@ -94,7 +94,7 @@ qemu_setargs_riscv64() {
     -nographic
     -machine virt
     -m 2G
-    -kernel bbl
+    -kernel "$1"/bbl
     -append "console=ttyS0 rw root=/dev/vda"
     -drive file="${3}p3",format=raw,id=hd0
     -device virtio-blk-device,drive=hd0
