@@ -17,7 +17,7 @@
  #    You should have received a copy of the GNU General Public License       #
  #    along with this program.  If not, see <http://www.gnu.org/licenses/>.   #
  ##############################################################################
- # this is a convenience script to start a created VM
+ # this is a convenience script to start a parabola VM using qemu
  ##############################################################################
 
 # common directories
@@ -57,7 +57,18 @@ check_kernel_arch() {
 
   [ "x$machine" != "xno" ] && return
 
-  # no elf header? maybe arm?
+  # check if the kernel arch can be gathered from objdump
+
+  echo -n "checking for kernel binary header ... "
+  set -o pipefail
+  machine=$(objdump -f "$kernel" 2>/dev/null | grep architecture: | awk '{print $2}' | tr -d ',') \
+    || machine=no
+  set +o pipefail
+  echo "$machine"
+
+  [ "x$machine" != "xno" ] && return
+
+  # no usable binary headers? maybe arm?
 
   echo -n "checking for ARM boot executable ... "
   local is_arm=no
@@ -67,16 +78,14 @@ check_kernel_arch() {
 
   [ "x$machine" != "xno" ] && return
 
-  # no idea, just bail.
+  # no idea; bail.
 
   error "unable to extract kernel arch from image"
   return "$ERROR_MISSING"
 }
 
 qemu_setargs_arm() {
-  qemu_args=(
-    -snapshot
-    -nographic
+  qemu_args+=(
     -machine vexpress-a9
     -cpu cortex-a9
     -m 1G
@@ -89,9 +98,7 @@ qemu_setargs_arm() {
 }
 
 qemu_setargs_riscv64() {
-  qemu_args=(
-    -snapshot
-    -nographic
+  qemu_args+=(
     -machine virt
     -m 2G
     -kernel "$1"/bbl
@@ -102,6 +109,20 @@ qemu_setargs_riscv64() {
     -device virtio-rng-device,rng=rng0
     -device virtio-net-device,netdev=usernet
     -netdev user,id=usernet
+  )
+}
+
+qemu_setargs_i386() {
+    qemu_setargs_x86_64 "$@"
+}
+
+qemu_setargs_x86_64() {
+  qemu_args+=(
+    -m 2G
+    -kernel "$1"/vmlinuz-linux-libre
+    -initrd "$1"/initramfs-linux-libre.img
+    -append "console=ttyS0 rw root=/dev/sda3"
+    -drive file="$2"
   )
 }
 
@@ -122,12 +143,15 @@ boot_from_image() {
   case "$machine" in
     RISC-V) arch=riscv64 ;;
     ARM)    arch=arm     ;;
+    i386)   arch=i386    ;;
+    i386:*) arch=x86_64  ;;
     *)      error "unrecognized machine '$machine'"
             return "$ERROR_UNSPECIFIED" ;;
   esac
 
-  qemu_args=()
+  qemu_args=(-snapshot -nographic)
   "qemu_setargs_$arch" "$TOPBUILDDIR"/mnt "$1" "$loopdev"
+  qemu_arch_is_foreign "$arch" || qemu_args+=(-enable-kvm)
   QEMU_AUDIO_DRV=none "qemu-system-$arch" "${qemu_args[@]}"
 }
 

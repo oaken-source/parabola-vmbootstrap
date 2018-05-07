@@ -40,6 +40,14 @@ qemu_img_partition_and_mount_for_armv7h() {
 }
 
 qemu_img_partition_and_mount_for_riscv64() {
+  qemu_img_partition_and_mount_for_x86_64 "$@"
+}
+
+qemu_img_partition_and_mount_for_i686() {
+  qemu_img_partition_and_mount_for_x86_64 "$@"
+}
+
+qemu_img_partition_and_mount_for_x86_64() {
   parted -s "$1" \
     mklabel gpt \
     mkpart primary ext2 1MiB 513MiB \
@@ -74,17 +82,31 @@ qemu_img_lorelease() {
   losetup -d "$1"
 }
 
-qemu_setup_user_static() {
+qemu_arch_is_foreign() {
   # borrowed from /usr/bin/librechroot
-	local setarch interpreter
-	case "$ARCH" in
-		armv7h) setarch=armv7l;  interpreter=/usr/bin/qemu-arm-     ;;
-		*)      setarch="$ARCH"; interpreter=/usr/bin/qemu-"$ARCH"- ;;
+  local setarch
+	case "$1" in
+		arm*) setarch=armv7l  ;;
+		*)    setarch="$1"    ;;
 	esac
 
-	if ! setarch "$setarch" /bin/true 2>/dev/null; then
+  echo -n "checking if arch '$1' is foreign ... "
+  local need_qemu=no
+  setarch "$setarch" /bin/true 2>/dev/null || need_qemu=yes
+  echo "$need_qemu"
+
+  [ "x$need_qemu" == "xyes" ] || return
+}
+
+qemu_setup_user_static() {
+	local interpreter
+	case "$ARCH" in
+		armv7h) interpreter=/usr/bin/qemu-arm-     ;;
+		*)      interpreter=/usr/bin/qemu-"$ARCH"- ;;
+	esac
+
+	if qemu_arch_is_foreign "$ARCH"; then
     # target arch can't execute natively, pacstrap is going to need help by qemu
-		# Make sure that qemu-static is set up with binfmt_misc
 		if [[ -z $(grep -l -F \
 			     -e "interpreter $interpreter" \
 			     -r -- /proc/sys/fs/binfmt_misc 2>/dev/null \
@@ -104,7 +126,7 @@ qemu_cleanup_user_static() {
   rm -f "$1"/usr/bin/qemu-*
 }
 
-qemu_img_finalize_for_arm() {
+qemu_img_finalize_for_armv7h() {
   true
 }
 
@@ -112,6 +134,14 @@ qemu_img_finalize_for_riscv64() {
   # for the time being, use fedora bbl to boot
   wget https://fedorapeople.org/groups/risc-v/disk-images/bbl \
     -O "$1"/boot/bbl
+}
+
+qemu_img_finalize_for_i686() {
+  true
+}
+
+qemu_img_finalize_for_x86_64() {
+  true
 }
 
 qemu_make_image() {
