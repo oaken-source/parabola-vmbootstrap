@@ -112,6 +112,17 @@ qemu_setargs_riscv64() {
   )
 }
 
+qemu_setargs_ppc64() {
+  qemu_args+=(
+    -machine pseries
+    -m 2G
+    -kernel "$1"/vmlinuz-linux-libre
+    -initrd "$1"/initramfs-linux-libre.img
+    -append "console=ttyS0 rw root=/dev/sda3"
+    -drive file="$2"
+  )
+}
+
 qemu_setargs_i386() {
     qemu_setargs_x86_64 "$@"
 }
@@ -141,15 +152,17 @@ boot_from_image() {
   check_kernel_arch "$TOPBUILDDIR"/mnt || return
 
   case "$machine" in
-    RISC-V) arch=riscv64 ;;
-    ARM)    arch=arm     ;;
-    i386)   arch=i386    ;;
-    i386:*) arch=x86_64  ;;
-    *)      error "unrecognized machine '$machine'"
-            return "$ERROR_UNSPECIFIED" ;;
+    RISC-V)     arch=riscv64  ;;
+    PowerPC64)  arch=ppc64    ;;
+    ARM)        arch=arm      ;;
+    i386)       arch=i386     ;;
+    i386:*)     arch=x86_64   ;;
+    *)          error "unrecognized machine '$machine'"
+                return "$ERROR_UNSPECIFIED" ;;
   esac
 
-  qemu_args=(-snapshot -nographic)
+  #qemu_args=(-snapshot -nographic)
+  qemu_args=(-nographic)
   "qemu_setargs_$arch" "$TOPBUILDDIR"/mnt "$1" "$loopdev"
   qemu_arch_is_foreign "$arch" || qemu_args+=(-enable-kvm)
   QEMU_AUDIO_DRV=none "qemu-system-$arch" "${qemu_args[@]}"

@@ -43,6 +43,10 @@ qemu_img_partition_and_mount_for_riscv64() {
   qemu_img_partition_and_mount_for_x86_64 "$@"
 }
 
+qemu_img_partition_and_mount_for_powerpc64le() {
+  qemu_img_partition_and_mount_for_x86_64 "$@"
+}
+
 qemu_img_partition_and_mount_for_i686() {
   qemu_img_partition_and_mount_for_x86_64 "$@"
 }
@@ -72,6 +76,7 @@ qemu_img_losetup() {
   echo -n "checking for free loop device ... "
   loopdev=$(losetup -f --show "$1") || loopdev=no
   echo "$loopdev"
+  partprobe "$loopdev"
 
   [ "x$loopdev" == "xno" ] && return "$ERROR_MISSING"
 
@@ -101,8 +106,9 @@ qemu_arch_is_foreign() {
 qemu_setup_user_static() {
 	local interpreter
 	case "$ARCH" in
-		armv7h) interpreter=/usr/bin/qemu-arm-     ;;
-		*)      interpreter=/usr/bin/qemu-"$ARCH"- ;;
+		armv7h)       interpreter=/usr/bin/qemu-arm-     ;;
+    powerpc64le)  interpreter=/usr/bin/qemu-ppc64le- ;;
+		*)            interpreter=/usr/bin/qemu-"$ARCH"- ;;
 	esac
 
 	if qemu_arch_is_foreign "$ARCH"; then
@@ -134,6 +140,10 @@ qemu_img_finalize_for_riscv64() {
   # for the time being, use fedora bbl to boot
   wget https://fedorapeople.org/groups/risc-v/disk-images/bbl \
     -O "$1"/boot/bbl
+}
+
+qemu_img_finalize_for_powerpc64le() {
+  true
 }
 
 qemu_img_finalize_for_i686() {
