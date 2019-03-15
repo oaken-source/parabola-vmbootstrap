@@ -1,11 +1,12 @@
 
-parabola-imagebuilder
-=====================
+parabola-vmbootstrap
+====================
 
-This is a collection of scripts creating parabola images for use with qemu.
+This is a collection of scripts for creating and booting parabola virtual
+machine images for use with qemu.
 
-image creation
---------------
+virtual machine image creation
+------------------------------
 
 To create a new virtual machine image, run
   $> sudo ./create.sh
@@ -23,12 +24,27 @@ The creation is influenced by the following environment variables:
 The created images are stored in the build/ directory.
 
 
-virtual machine start
----------------------
+virtual machine boot
+--------------------
 
-To boot a created virtual machine, run
-  $> sudo ./boot.sh [path to created image]
+To boot a created virtual machine, run:
 
-The start.sh script assumes that you want a throwaway session, so it will start
-the virtual machine in snapshot mode, and changes during the session will be
-discarded.
+  $> ./pvmboot.sh [path to image] [additional qemu args...]
+
+the script will attempt to determine the architecture of the provided virtual
+machine image, and set the qemu executable and sane default flags for the qemu
+invocation automatically, including kvm acceleration, if available for the
+target architecture.
+
+additionally, the script will evaluate the DISPLAY environment variable to
+determine whether a graphical desktop environment is available, and will start
+the image in serial console mode if necessary. This behavior can be forced by
+unsetting DISPLAY before executing the script:
+
+  $> DISPLAY= ./pvmboot.sh [...]
+
+The default flags can be overwritten or extended, for example to allocate more
+memory to the machine, by specifying additional qemu parameters on the command
+line following the virtual machine image name:
+
+  $> DISPLAY= ./pvmboot [path to image] -m 2G
