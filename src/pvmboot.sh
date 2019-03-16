@@ -117,23 +117,25 @@ pvm_guess_qemu_args() {
   # otherwise, decide by target arch
   case "$2" in
     i386|x86_64|ppc64)
-      qemu_args+=(-m 1G "$1")
+      qemu_args+=(-m 2G "$1")
       # unmount the unneeded virtual drive early
       pvm_umount ;;
     arm)
       qemu_args+=(
-        -machine vexpress-a9
-        -cpu cortex-a9
-        -m 1G
-        -kernel "$workdir"/vmlinuz-linux-libre
-        -dtb "$workdir"/dtbs/linux-libre/vexpress-v2p-ca9.dtb
-        -initrd "$workdir"/initramfs-linux-libre.img
-        -append "console=tty0 console=ttyAMA0 rw root=/dev/mmcblk0p3"
-        -drive "if=sd,driver=raw,cache=writeback,file=$1") ;;
+        -machine virt
+        -m 2G
+        -kernel "$workdir"/zImage
+        -initrd "$workdir"/initramfs-linux.img
+        -append "console=tty0 console=ttyAMA0 rw root=/dev/vda3"
+        -drive "if=none,file=$1,format=raw,id=hd"
+        -device "virtio-blk-device,drive=hd"
+        -device virtio-gpu-device
+        -netdev "user,id=mynet"
+        -device "virtio-net-device,netdev=mynet") ;;
     riscv64)
       qemu_args+=(
         -machine virt
-        -m 1G
+        -m 2G
         -kernel "$workdir"/bbl
         -append "rw root=/dev/vda"
         -drive "file=${loopdev}p3,format=raw,id=hd0"
