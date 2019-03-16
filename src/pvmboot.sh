@@ -50,7 +50,8 @@ pvm_mount() {
 
   workdir="$(mktemp -d -t pvm-XXXXXXXXXX)" || return
   loopdev="$(sudo losetup -fLP --show "$1")" || return
-  sudo mount "$loopdev"p1 "$workdir" || return
+  sudo mount "$loopdev"p1 "$workdir" \
+    || sudo mount "$loopdev"p2 "$workdir" || return
 }
 
 pvm_umount() {
@@ -106,7 +107,7 @@ pvm_native_arch() {
   setarch "$arch" /bin/true 2>/dev/null || return
 }
 
-pvm_build_qemu_args() {
+pvm_guess_qemu_args() {
   # if we're not running on X / wayland, disable graphics
   if [ -z "$DISPLAY" ]; then qemu_args+=(-nographic); fi
 
@@ -117,8 +118,7 @@ pvm_build_qemu_args() {
   case "$2" in
     i386|x86_64|ppc64)
       qemu_args+=(-m 1G "$1")
-      if [ -z "$DISPLAY" ]; then qemu_args+=(-append "console=ttyS0"); fi
-      # unmount the drive early
+      # unmount the unneeded virtual drive early
       pvm_umount ;;
     arm)
       qemu_args+=(
@@ -128,22 +128,23 @@ pvm_build_qemu_args() {
         -kernel "$workdir"/vmlinuz-linux-libre
         -dtb "$workdir"/dtbs/linux-libre/vexpress-v2p-ca9.dtb
         -initrd "$workdir"/initramfs-linux-libre.img
-        -append " rw root=/dev/mmcblk0p3"
-        -drive "if=sd,driver=raw,cache=writeback,file=$1")
-      if [ -z "$DISPLAY" ]; then qemu_args+=(-append " console=ttyAMA0"); fi ;;
+        -append "console=tty0 console=ttyAMA0 rw root=/dev/mmcblk0p3"
+        -drive "if=sd,driver=raw,cache=writeback,file=$1") ;;
     riscv64)
       qemu_args+=(
         -machine virt
         -m 1G
         -kernel "$workdir"/bbl
-        -append " rw root=/dev/vda"
+        -append "rw root=/dev/vda"
         -drive "file=${loopdev}p3,format=raw,id=hd0"
         -device "virtio-blk-device,drive=hd0"
         -object "rng-random,filename=/dev/urandom,id=rng0"
         -device "virtio-rng-device,rng=rng0"
         -device "virtio-net-device,netdev=usernet"
         -netdev "user,id=usernet")
-      if [ -z "$DISPLAY" ]; then qemu_args+=(-append " console=ttyS0"); fi ;;
+      if [ -z "$DISPLAY" ]; then
+        qemu_args+=(-append "console=ttyS0 rw root=/dev/vda");
+      fi ;;
     *)
       error "%s: unable to determine default qemu args" "$1"
       return "$EXIT_FAILURE" ;;
@@ -152,7 +153,7 @@ pvm_build_qemu_args() {
 
 main() {
   if [ "$(id -u)" -eq 0 ]; then
-    error "This program must be run as regular user"
+    error "This program must be run as a regular user"
     exit "$EXIT_NOPERMISSION"
   fi
 
@@ -187,7 +188,7 @@ main() {
   fi
 
   local qemu_args=()
-  pvm_build_qemu_args "$imagefile" "$arch" || exit
+  pvm_guess_qemu_args "$imagefile" "$arch" || exit
   qemu_args+=("$@")
 
   (set -x; qemu-system-"$arch" "${qemu_args[@]}")

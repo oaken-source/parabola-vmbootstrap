@@ -9,20 +9,26 @@ virtual machine image creation
 ------------------------------
 
 To create a new virtual machine image, run
-  $> sudo ./create.sh
 
-The creation is influenced by the following environment variables:
+  $> ./pvmbootstrap.sh [path to image] [arch]
 
- ARCH - the target architecture of the image. default: armv7h
+where arch is one of the supported parabola arches, which are currently:
 
- SIZE - the size of the root image. default: 64GiB
+  official:   [ i686, x86_64, armv7h ]
+  unofficial: [ ppc64le, riscv64 ]
 
- MIRROR - the mirror used to pacstrap the image, anything valid in a `Server =`
-          line can go here.
-          default: https://redirector.parabola.nu/\$repo/os/\$arch}
+the script will attempt to bootstrap a virtual machine of the selected
+archituecture in the output file specified. If the output file already exists,
+the script will emit a warning and ask for confirmation to proceed.
 
-The created images are stored in the build/ directory.
+the creation can be influenced by providing one or more of the following
+arguments to pvmbootstrap.sh:
 
+  -s size   -- set the size of the created VM image (default: 64G)
+  -M mirror -- set the mirror to fetch packages from
+               (default: https://repo.parabola.nu/$repo/os/$arch)
+
+the created machine images should be bootable using pvmboot.sh
 
 virtual machine boot
 --------------------
