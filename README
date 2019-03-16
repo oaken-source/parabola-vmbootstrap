@@ -27,8 +27,16 @@ arguments to pvmbootstrap.sh:
   -s size   -- set the size of the created VM image (default: 64G)
   -M mirror -- set the mirror to fetch packages from
                (default: https://repo.parabola.nu/$repo/os/$arch)
+  -H hook   -- add a confiuration hook to be executed. this can be the path to
+               a shell script or one of the existing hooks described below
 
-the created machine images should be bootable using pvmboot.sh
+The creation hooks currently supported are:
+
+ethernet-dhcp:
+
+  this hook will setup ethernet in the VM by enabling systemd-resolved and
+  symlinking /etc/resolv.conf properly, as well as creating and enabling a
+  netctl configuration based on the ethernet-dhcp example.
 
 virtual machine boot
 --------------------

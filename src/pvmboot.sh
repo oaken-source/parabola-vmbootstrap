@@ -124,12 +124,11 @@ pvm_guess_qemu_args() {
       qemu_args+=(
         -machine virt
         -m 2G
-        -kernel "$workdir"/zImage
-        -initrd "$workdir"/initramfs-linux.img
+        -kernel "$workdir"/vmlinuz-linux-libre
+        -initrd "$workdir"/initramfs-linux-libre.img
         -append "console=tty0 console=ttyAMA0 rw root=/dev/vda3"
         -drive "if=none,file=$1,format=raw,id=hd"
         -device "virtio-blk-device,drive=hd"
-        -device virtio-gpu-device
         -netdev "user,id=mynet"
         -device "virtio-net-device,netdev=mynet") ;;
     riscv64)

@@ -22,7 +22,24 @@
 . "$(librelib messages)"
 
 usage() {
-  print "usage: %s [-h] [-s size] [-M mirror] filename arch" "${0##*/}"
+  print "usage: %s [-h] [-s size] [-M mirror] [-H hook...] filename arch" "${0##*/}"
+  echo
+  prose "  this script produces preconfigured parabola GNU/Linux-libre virtual
+         machine images, to be started using the accompanying pvmboot.sh
+         script. The created image is placed at the specified path."
+  echo
+  prose "  the target architecture of the virtual machine image can be one of the
+         officially supported i686, x86_64 and armv7h, as well as one of the
+         unofficial ports for ppc64le and riscv64."
+  echo
+  prose "  the creation of the virtual machine is configurable in three ways. First,
+         the size of the image can be configured with the -s switch, whose
+         value is passed verbatim to qemu-img create (default 64G). Second,
+         the mirror to load packages from can be configured with the -M switch,
+         wich is necessary for the unofficial ports, whose packages are not on
+         the main mirrors. Lastly, the -H switch can be passed multiple times to
+         specify post-install hooks to be run in the virtual machine for
+         install finalization. See src/hooks/ for examples."
   echo
   echo  "this script is developed as part of parabola-vmbootstrap."
 }
@@ -40,17 +57,21 @@ pvm_native_arch() {
 pvm_bootstrap() {
   msg "%s: starting image creation for %s" "$file" "$arch"
 
+  # create the raw image file
   qemu-img create -f raw "$file" "$size" || return
 
+  # prepare for cleanup
   trap 'pvm_cleanup' INT TERM RETURN
 
+  # mount the virtual disk
   local workdir loopdev
   workdir="$(mktemp -d -t pvm-rootfs-XXXXXXXXXX)" || return
   loopdev="$(sudo losetup -fLP --show "$file")" || return
 
+  # clean out the first 8MiB
   sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return
 
-  # partition and mount
+  # partition
   case "$arch" in
     i686|x86_64)
       sudo parted -s "$loopdev" \
@@ -59,57 +80,61 @@ pvm_bootstrap() {
         set 1 bios_grub on \
         mkpart primary ext2 2MiB 514MiB \
         mkpart primary linux-swap 514MiB 4610MiB \
-        mkpart primary ext4 4610MiB 100% || return
-
-      sudo partprobe "$loopdev"
-
-      sudo mkfs.ext2 "$loopdev"p2 || return
-      sudo mkswap "$loopdev"p3 || return
-      sudo mkfs.ext4 "$loopdev"p4 || return
-
-      sudo mount "$loopdev"p4 "$workdir" || return
-      sudo mkdir -p "$workdir"/boot || return
-      sudo mount "$loopdev"p2 "$workdir"/boot || return
-      ;;
-    ppc64le|riscv64)
-      sudo parted -s "$loopdev" \
-        mklabel gpt \
-        mkpart primary ext2 1MiB 513MiB \
-        set 1 boot on \
-        mkpart primary linux-swap 513MiB 4609MiB \
-        mkpart primary ext4 4609MiB 100% || return
-
-      sudo partprobe "$loopdev"
-
-      sudo mkfs.ext2 "$loopdev"p1 || return
-      sudo mkswap "$loopdev"p2 || return
-      sudo mkfs.ext4 "$loopdev"p3 || return
-
-      sudo mount "$loopdev"p3 "$workdir" || return
-      sudo mkdir -p "$workdir"/boot || return
-      sudo mount "$loopdev"p1 "$workdir"/boot || return
-      ;;
+        mkpart primary ext4 4610MiB 100% || return ;;
     armv7h)
       sudo parted -s "$loopdev" \
         mklabel gpt \
         mkpart ESP fat32 1MiB 513MiB \
         set 1 boot on \
         mkpart primary linux-swap 513MiB 4609MiB \
-        mkpart primary ext4 4609MiB 100% || return
+        mkpart primary ext4 4609MiB 100% || return ;;
+    ppc64le|riscv64)
+      sudo parted -s "$loopdev" \
+        mklabel gpt \
+        mkpart primary ext2 1MiB 513MiB \
+        set 1 boot on \
+        mkpart primary linux-swap 513MiB 4609MiB \
+        mkpart primary ext4 4609MiB 100% || return ;;
+  esac
 
-      sudo partprobe "$loopdev"
+  # refresh partition data
+  sudo partprobe "$loopdev"
 
+  # make file systems
+  local swapdev
+  case "$arch" in
+    i686|x86_64)
+      sudo mkfs.ext2 "$loopdev"p2 || return
+      sudo mkswap "$loopdev"p3 || return
+      sudo mkfs.ext4 "$loopdev"p4 || return
+      swapdev="$loopdev"p3 ;;
+    armv7h)
       sudo mkfs.vfat -F 32 "$loopdev"p1 || return
       sudo mkswap "$loopdev"p2 || return
       sudo mkfs.ext4 "$loopdev"p3 || return
+      swapdev="$loopdev"p2 ;;
+    ppc64le|riscv64)
+      sudo mkfs.ext2 "$loopdev"p1 || return
+      sudo mkswap "$loopdev"p2 || return
+      sudo mkfs.ext4 "$loopdev"p3 || return
+      swapdev="$loopdev"p2 ;;
+  esac
 
+  # mount partitions
+  case "$arch" in
+    i686|x86_64)
+      sudo mount "$loopdev"p4 "$workdir" || return
+      sudo mkdir -p "$workdir"/boot || return
+      sudo mount "$loopdev"p2 "$workdir"/boot || return
+      ;;
+    armv7h|ppc64le|riscv64)
       sudo mount "$loopdev"p3 "$workdir" || return
       sudo mkdir -p "$workdir"/boot || return
       sudo mount "$loopdev"p1 "$workdir"/boot || return
       ;;
   esac
 
-  # setup qemu-user-static
+  # setup qemu-user-static, if necessary
   if ! pvm_native_arch "$arch"; then
     # target arch can't execute natively, pacstrap is going to need help by qemu
     local qemu_arch
@@ -131,7 +156,7 @@ pvm_bootstrap() {
     sudo cp -v "/usr/bin/qemu-$qemu_arch-"* "$workdir"/usr/bin || return
   fi
 
-  # pacstrap
+  # prepare pacstrap config
   local pacconf
   pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return
   cat > "$pacconf" << EOF
@@ -147,53 +172,117 @@ Server = $mirror
 Server = $mirror
 EOF
 
-  local pkg=(base)
-
+  # prepare lists of packages
+  local pkg=(base haveged)
   case "$arch" in
     i686|x86_64) pkg+=(grub) ;;
   esac
+  local pkg_guest_cache=(ca-certificates-utils)
 
-  sudo pacstrap -GMcd -C "$pacconf" "$workdir" "${pkg[@]}" || return
+  # pacstrap! :)
+  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkg[@]}" || return
+  sudo pacstrap -GM -C "$pacconf" "$workdir" "${pkg_guest_cache[@]}" || return
 
-  # finalize
+  # create an fstab
+  sudo swapoff --all
+  sudo swapon "$swapdev"
+  genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
+  sudo swapoff "$swapdev"
+  sudo swapon --all
+
+  # install a boot loader
   case "$arch" in
     i686|x86_64)
-      # create an fstab
-      sudo swapoff --all
-      sudo swapon "$loopdev"p3
-      genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
-      sudo swapoff "$loopdev"p3
-      sudo swapon --all
-
       # install grub to the VM
       sudo sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0"/' \
         "$workdir"/etc/default/grub || return
       sudo arch-chroot "$workdir" grub-install --target=i386-pc "$loopdev" || return
       sudo arch-chroot "$workdir" grub-mkconfig -o /boot/grub/grub.cfg || return
-
-      # regenerate the chroot-botched initcpio
-      sudo cp "$workdir"/etc/mkinitcpio.d/linux-libre.preset{,.backup} || return
-      echo "default_options=\"-S autodetect\"" \
-        | sudo tee -a "$workdir"/etc/mkinitcpio.d/linux-libre.preset || return
-      sudo arch-chroot "$workdir" mkinitcpio -p linux-libre || return
-      sudo mv "$workdir"/etc/mkinitcpio.d/linux-libre.preset{.backup,} || return
-      ;;
-    armv7h)
-      # create an fstab
-      sudo swapoff --all
-      sudo swapon "$loopdev"p2
-      genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
-      sudo swapoff "$loopdev"p2
-      sudo swapon --all
       ;;
     riscv64)
       # FIXME: for the time being, use fedora bbl to boot
       sudo wget https://fedorapeople.org/groups/risc-v/disk-images/bbl \
         -O "$workdir"/boot/bbl || return
       ;;
+    # armv7h has no boot loader.
+    # FIXME: what about ppc64le
   esac
 
+  # regenerate the initcpio, skipping the autodetect hook
+  sudo cp "$workdir"/etc/mkinitcpio.d/linux-libre.preset{,.backup} || return
+  echo "default_options=\"-S autodetect\"" \
+    | sudo tee -a "$workdir"/etc/mkinitcpio.d/linux-libre.preset || return
+  sudo arch-chroot "$workdir" mkinitcpio -p linux-libre || return
+  sudo mv "$workdir"/etc/mkinitcpio.d/linux-libre.preset{.backup,} || return
+
+  # disable audit
+  sudo arch-chroot "$workdir" systemctl mask systemd-journald-audit.socket
+
+  # initialize the pacman keyring
+  sudo arch-chroot "$workdir" pacman-key --init
+  sudo arch-chroot "$workdir" pacman-key --populate archlinux archlinux32 archlinuxarm parabola
+
+  # enable the entropy daemon, to avoid stalling https
+  sudo arch-chroot "$workdir" systemctl enable haveged.service
+
+  # push hooks into the image
+  sudo mkdir -p "$workdir/root/hooks"
+  [ "${#hooks[@]}" -eq 0 ] || sudo cp -v "${hooks[@]}" "$workdir"/root/hooks/
+
+  # create a master hook script
+  sudo tee "$workdir"/root/hooks.sh << 'EOF'
+#!/bin/bash
+systemctl disable preinit.service
+
+# fix the mkinitcpio
+mkinitcpio -p linux-libre
+
+# fix ca-certificates
+pacman -U --noconfirm /var/cache/pacman/pkg/ca-certificates-utils-*.pkg.tar.xz
+
+for hook in /root/hooks/*; do
+  echo "running hook \"$hook\""
+  . "$hook" || return
+done
+
+rm -rf /root/hooks
+rm -f /root/hooks.sh
+rm -f /usr/lib/systemd/system/preinit.service
+EOF
+
+  # create a preinit service to run the hooks
+  sudo tee "$workdir"/usr/lib/systemd/system/preinit.service << 'EOF'
+[Unit]
+Description=Oneshot VM Preinit
+After=multi-user.target
+
+[Service]
+StandardOutput=journal+console
+StandardError=journal+console
+ExecStart=/usr/bin/bash /root/hooks.sh
+Type=oneshot
+ExecStopPost=shutdown -r now
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+  # enable the preinit service
+  sudo arch-chroot "$workdir" systemctl enable preinit.service || return
+
+  # unmount everything
   pvm_cleanup
+
+  # boot the machine, and run the preinit scripts
+  local qemu_flags=(-no-reboot)
+  if [ -f "./src/pvmboot.sh" ]; then
+    DISPLAY='' bash ./src/pvmboot.sh "$file" "${qemu_flags[@]}" || return
+  elif type -p pvmboot &>/dev/null; then
+    DISPLAY='' pvmboot "$file" "${qemu_flags[@]}" || return
+  else
+    error "%s: pvmboot not available -- unable to run hooks" "$file"
+    return "$EXIT_FAILURE"
+  fi
 }
 
 pvm_cleanup() {
@@ -219,13 +308,23 @@ main() {
 
   local size="64G"
   local mirror="https://repo.parabola.nu/\$repo/os/\$arch"
+  local hooks=()
 
   # parse options
-  while getopts 'hs:M:' arg; do
+  while getopts 'hs:M:H:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
       s) size="$OPTARG";;
       M) mirror="$OPTARG";;
+      H) if [ -e "/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh" ]; then
+           hooks+=("/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh")
+         elif [ -e "./src/hooks/hook-$OPTARG.sh" ]; then
+           hooks+=("./src/hooks/hook-$OPTARG.sh")
+         elif [ -e "$OPTARG" ]; then
+           hooks+=("$OPTARG")
+         else
+           warning "%s: hook does not exist" "$OPTARG"
+         fi ;;
       *) usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
@@ -246,6 +345,7 @@ main() {
       exit "$EXIT_INVALIDARGUMENT";;
   esac
 
+  # determine whether the target output file already exists
   if [ -e "$file" ]; then
     warning "%s: file exists. Continue? [y/N]" "$file"
     read -p " " -n 1 -r
@@ -256,10 +356,12 @@ main() {
     rm -f "$file" || exit
   fi
 
+  # create the virtual machine
   if ! pvm_bootstrap; then
     error "%s: bootstrap failed" "$file"
     exit "$EXIT_FAILURE"
   fi
+
   msg "%s: bootstrap complete" "$file"
 }
 
