@@ -193,9 +193,17 @@ EOF
   # install a boot loader
   case "$arch" in
     i686|x86_64)
-      # install grub to the VM
-      sudo sed -i 's/^GRUB_CMDLINE_LINUX=.*/GRUB_CMDLINE_LINUX="console=tty0 console=ttyS0"/' \
+      # enable serial console
+      local field=GRUB_CMDLINE_LINUX_DEFAULT
+      local value="console=tty0 console=ttyS0"
+      sudo sed -i "s/.*$field=.*/$field=\"$value\"/" \
         "$workdir"/etc/default/grub || return
+      # disable boot menu timeout
+      local field=GRUB_TIMEOUT
+      local value=0
+      sudo sed -i "s/.*$field=.*/$field=$value/" \
+        "$workdir"/etc/default/grub || return
+      # install grub to the VM
       sudo arch-chroot "$workdir" grub-install --target=i386-pc "$loopdev" || return
       sudo arch-chroot "$workdir" grub-mkconfig -o /boot/grub/grub.cfg || return
       ;;
@@ -248,6 +256,8 @@ done
 rm -rf /root/hooks
 rm -f /root/hooks.sh
 rm -f /usr/lib/systemd/system/preinit.service
+
+echo "preinit hooks successful"
 EOF
 
   # create a preinit service to run the hooks
@@ -275,13 +285,25 @@ EOF
 
   # boot the machine, and run the preinit scripts
   local qemu_flags=(-no-reboot)
+  local pvmboot
   if [ -f "./src/pvmboot.sh" ]; then
-    DISPLAY='' bash ./src/pvmboot.sh "$file" "${qemu_flags[@]}" || return
+    pvmboot=(bash ./src/pvmboot.sh)
   elif type -p pvmboot &>/dev/null; then
-    DISPLAY='' pvmboot "$file" "${qemu_flags[@]}" || return
+    pvmboot=(pvmboot)
   else
     error "%s: pvmboot not available -- unable to run hooks" "$file"
     return "$EXIT_FAILURE"
+  fi
+
+  exec 3>&1
+  DISPLAY='' "${pvmboot[@]}" "$file" "${qemu_flags[@]}" \
+    | tee /dev/fd/3 | grep -q "preinit hooks successful"
+  local res=$?
+  exec 3>&-
+
+  if [ "$res" -ne 0 ]; then
+    error "%s: failed to complete preinit hooks" "$file"
+    return "$res"
   fi
 }
 

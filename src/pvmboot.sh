@@ -193,6 +193,9 @@ main() {
   qemu_args+=("$@")
 
   (set -x; qemu-system-"$arch" "${qemu_args[@]}")
+
+  # clean up the terminal, in case SeaBIOS did something weird
+  echo -n "[?7h[0m"
   pvm_umount
 }
 
