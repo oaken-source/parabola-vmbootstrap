@@ -22,26 +22,31 @@
 . "$(librelib messages)"
 
 usage() {
-  print "usage: %s [-h] [-s size] [-M mirror] [-H hook...] filename arch" "${0##*/}"
+  print "usage: %s [-h] [-s SIZE] [-M MIRROR] [-H HOOK]... IMG ARCH" "${0##*/}"
+  prose "Produce preconfigured parabola GNU/Linux-libre virtual machine instances."
   echo
-  prose "  this script produces preconfigured parabola GNU/Linux-libre virtual
-         machine images, to be started using the accompanying pvmboot.sh
-         script. The created image is placed at the specified path."
+  prose "The produced image file is written to IMG, and is configured and
+         bootstrapped for the achitecture specified in ARCH. ARCH can ether be
+         one of the officially supported architectures x86_64, i686 or armv7h,
+         or one of the unofficial arches ppc64le and riscv64 (refer to -M for
+         custom package mirrors)"
   echo
-  prose "  the target architecture of the virtual machine image can be one of the
-         officially supported i686, x86_64 and armv7h, as well as one of the
-         unofficial ports for ppc64le and riscv64."
+  echo  "Supported options:"
+  echo  "  -s SIZE     Set the size of the VM image (default: 64GiB)"
+  echo  "  -M MIRROR   Choose a different mirror to pacstrap from"
+  echo  "                default: <https://repo.parabola.nu/\$repo/os/\$arch>"
+  echo  "  -H HOOK     Enable a hook to customize the created image. This can be"
+  echo  "                the path to a script, which will be executed once within"
+  echo  "                the running VM, or one of the predefined hooks described"
+  echo  "                below. This option can be specified multiple times."
+  echo  "  -h          Display this help and exit"
   echo
-  prose "  the creation of the virtual machine is configurable in three ways. First,
-         the size of the image can be configured with the -s switch, whose
-         value is passed verbatim to qemu-img create (default 64G). Second,
-         the mirror to load packages from can be configured with the -M switch,
-         wich is necessary for the unofficial ports, whose packages are not on
-         the main mirrors. Lastly, the -H switch can be passed multiple times to
-         specify post-install hooks to be run in the virtual machine for
-         install finalization. See src/hooks/ for examples."
+  echo  "Predefined hooks:"
+  echo  "  ethernet-dhcp:  configure and enable an ethernet device in the virtual"
+  echo  "                  machine, using openresolv, dhcp and systemd-networkd"
   echo
-  echo  "this script is developed as part of parabola-vmbootstrap."
+  echo  "This script is part of parabola-vmbootstrap. source code available at:"
+  echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
 }
 
 pvm_native_arch() {
@@ -170,10 +175,12 @@ Server = $mirror
 Server = $mirror
 [community]
 Server = $mirror
+[pcr]
+Server = $mirror
 EOF
 
   # prepare lists of packages
-  local pkg=(base haveged)
+  local pkg=(base haveged openssh openresolv ldns net-tools)
   case "$arch" in
     i686|x86_64) pkg+=(grub) ;;
   esac
@@ -189,6 +196,13 @@ EOF
   genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
   sudo swapoff "$swapdev"
   sudo swapon --all
+
+  # produce a hostname
+  echo "parabola" | sudo tee "$workdir"/etc/hostname
+
+  # produce an /etc/locale.conf
+  echo "LANG=en_US.UTF-8" | sudo tee "$workdir"/etc/locale.conf
+  sudo sed -i 's/#en_US.UTF-8/en_US.UTF-8/' "$workdir"/etc/locale.gen
 
   # install a boot loader
   case "$arch" in
@@ -242,21 +256,29 @@ EOF
 #!/bin/bash
 systemctl disable preinit.service
 
+# generate the locale
+locale-gen
+
 # fix the mkinitcpio
 mkinitcpio -p linux-libre
 
 # fix ca-certificates
 pacman -U --noconfirm /var/cache/pacman/pkg/ca-certificates-utils-*.pkg.tar.xz
 
+# run the hooks
 for hook in /root/hooks/*; do
   echo "running hook \"$hook\""
   . "$hook" || return
 done
 
+# clean up after yourself
 rm -rf /root/hooks
 rm -f /root/hooks.sh
 rm -f /usr/lib/systemd/system/preinit.service
+rm -f /var/cache/pacman/pkg/*
+rm -f /root/.bash_history
 
+# report success :)
 echo "preinit hooks successful"
 EOF
 

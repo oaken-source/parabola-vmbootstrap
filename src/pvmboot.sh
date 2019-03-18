@@ -22,22 +22,32 @@
 . "$(librelib messages)"
 
 usage() {
-  print "usage: %s [-h] filename [args...]" "${0##*/}"
+  print "usage: %s [-h] IMG [ARG]..." "${0##*/}"
+  prose "Determine the architecture of IMG and boot it using qemu. IMG is assumed
+         to be a valid, raw-formatted parabola virtual machine image, ideally
+         created using pvmbootstrap. The started instances are assigned 1GiB of
+         RAM and one SMP core."
   echo
-  prose "  this script is designed to smartly boot a parabola GNU/Linux-libre
-         virtual machine with qemu. It takes the path to a virtual machine image
-         as parameter, and determines the architecture of that image. It sets
-         default qemu parameters for the target architecture, and determines
-         whether kvm acceleration is available."
+  prose "When a graphical desktop environment is available, start the machine
+         normally, otherwise append -nographic to the qemu options. This behavior
+         can be forced by unsetting DISPLAY manually, for example through:"
   echo
-  prose "  the script also determines whether a graphical desktop environment
-         is available by evaluating the DISPLAY environment variable, and sets
-         default options accordingly."
+  echo  "  DISPLAY= ${0##*/} IMG ..."
   echo
-  prose "  the default qemu parameters can be overwritten and extended by adding
-         custom arguments after the image file name."
+  prose "When the architecture of IMG is compatible with the host architecture,
+         append -enable-kvm to the qemu arguments."
   echo
-  echo  "this script is developed as part of parabola-vmbootstrap."
+  prose "Further arguments provided after IMG will be passed unmodified to the
+         qemu invocation. This can be used to allocate more resources to the virtual
+         machine, for example:"
+  echo
+  echo  "  ${0##*/} IMG -m 2G -smp 2"
+  echo
+  echo  "Supported options:"
+  echo  "  -h   Display this help and exit"
+  echo
+  echo  "This script is part of parabola-vmbootstrap. source code available at:"
+  echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
 }
 
 pvm_mount() {

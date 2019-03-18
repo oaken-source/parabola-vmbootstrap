@@ -35,8 +35,8 @@ The creation hooks currently supported are:
 ethernet-dhcp:
 
   this hook will setup ethernet in the VM by enabling systemd-resolved and
-  symlinking /etc/resolv.conf properly, as well as creating and enabling a
-  netctl configuration based on the ethernet-dhcp example.
+  openresolv properly, as well as creating and enabling a systemd-networkd
+  configuration.
 
 virtual machine boot
 --------------------
@@ -62,3 +62,13 @@ memory to the machine, by specifying additional qemu parameters on the command
 line following the virtual machine image name:
 
   $> DISPLAY= ./pvmboot [path to image] -m 2G
+
+release tarball creation
+------------------------
+
+To convert a virtual machine image into a parabola release tarball, run:
+
+  $> ./pvm2tarball.sh [path to image]
+
+This will attempt to mount the rootfs and the /boot partition, and tar the
+contents to an output file, filtering out all unneeded files.
