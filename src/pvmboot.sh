@@ -52,7 +52,7 @@ usage() {
 
 pvm_mount() {
   if ! file "$1" | grep -q ' DOS/MBR '; then
-    error "$1: does not seem to be a raw qemu image."
+    error "%s: does not seem to be a raw qemu image." "$1"
     return "$EXIT_FAILURE"
   fi
 
