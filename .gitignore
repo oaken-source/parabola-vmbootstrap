@@ -6,12 +6,3 @@
 
 # tarballs
 *.tar.*
-
-# build dirs
-build/
-
-# generated ssh keys
-keys/*
-
-# boostrap packages
-/*-stage4/
