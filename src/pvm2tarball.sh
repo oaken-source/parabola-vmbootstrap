@@ -137,7 +137,6 @@ main() {
   sudo tar -c -f "$output" -C "$workdir" -X - . << EOF
 ./boot/lost+found
 ./etc/.updated
-./etc/pacman.d/empty.conf
 ./etc/pacman.d/gnupg
 ./lost+found
 ./root/.bash_history

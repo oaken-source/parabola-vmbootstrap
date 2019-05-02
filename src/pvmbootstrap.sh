@@ -22,7 +22,7 @@
 . "$(librelib messages)"
 
 usage() {
-  print "usage: %s [-h] [-s SIZE] [-M MIRROR] [-H HOOK]... IMG ARCH" "${0##*/}"
+  print "usage: %s [-hO] [-s SIZE] [-M MIRROR] [-H HOOK]... IMG ARCH" "${0##*/}"
   prose "Produce preconfigured parabola GNU/Linux-libre virtual machine instances."
   echo
   prose "The produced image file is written to IMG, and is configured and
@@ -32,6 +32,7 @@ usage() {
          custom package mirrors)"
   echo
   echo  "Supported options:"
+  echo  "  -O          bootstrap an openrc system instead of a systemd one"
   echo  "  -s SIZE     Set the size of the VM image (default: 64GiB)"
   echo  "  -M MIRROR   Choose a different mirror to pacstrap from"
   echo  "                default: <https://repo.parabola.nu/\$repo/os/\$arch>"
@@ -180,9 +181,13 @@ Server = $mirror
 EOF
 
   # prepare lists of packages
-  local pkg=(base haveged openssh openresolv ldns net-tools)
+  local pkg=("base$init" "openssh$init" openresolv ldns)
   case "$arch" in
     i686|x86_64) pkg+=(grub) ;;
+  esac
+  case "$arch" in
+    riscv64) ;;
+    *) pkg+=("haveged$init" net-tools) ;;
   esac
   local pkg_guest_cache=(ca-certificates-utils)
 
@@ -191,11 +196,15 @@ EOF
   sudo pacstrap -GM -C "$pacconf" "$workdir" "${pkg_guest_cache[@]}" || return
 
   # create an fstab
-  sudo swapoff --all
-  sudo swapon "$swapdev"
-  genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
-  sudo swapoff "$swapdev"
-  sudo swapon --all
+  case "$arch" in
+    riscv64) ;;
+    *)
+      sudo swapoff --all
+      sudo swapon "$swapdev"
+      genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
+      sudo swapoff "$swapdev"
+      sudo swapon --all ;;
+  esac
 
   # produce a hostname
   echo "parabola" | sudo tee "$workdir"/etc/hostname
@@ -353,10 +362,12 @@ main() {
   local size="64G"
   local mirror="https://repo.parabola.nu/\$repo/os/\$arch"
   local hooks=()
+  local init
 
   # parse options
-  while getopts 'hs:M:H:' arg; do
+  while getopts 'hOs:M:H:' arg; do
     case "$arg" in
+      O) init="-openrc";;
       h) usage; return "$EXIT_SUCCESS";;
       s) size="$OPTARG";;
       M) mirror="$OPTARG";;
