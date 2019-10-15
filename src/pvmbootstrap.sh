@@ -189,6 +189,12 @@ EOF
     riscv64) ;;
     *) pkg+=("haveged$init" net-tools) ;;
   esac
+  
+  # Be specific to skip around some conflicts
+  if [[ ! $init ]]; then
+	  pkg+=("systemd-udev")
+  fi
+  
   local pkg_guest_cache=(ca-certificates-utils)
 
   # pacstrap! :)
