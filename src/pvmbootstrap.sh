@@ -183,14 +183,6 @@ EOF
   # prepare lists of packages
   local pkg=("base$init" "openssh$init" openresolv ldns)
 
-  # Add back in the packages that the switch from base group
-  # to base PKG yanked
-  pkg+=("cryptsetup$init" "device-mapper$init" "dhcpcd$init" e2fsprogs inetutils \
-       jfsutils linux-libre logrotate "lvm2$init" man-db "mdadm$init" nano \
-       netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
-       texinfo usbutils vi xfsprogs your-freedom ) 
-
-
   case "$arch" in
     i686|x86_64) pkg+=(grub) ;;
   esac
@@ -199,11 +191,17 @@ EOF
     *) pkg+=("haveged$init" net-tools) ;;
   esac
   
-  # Be specific to skip around some conflicts
+  # Add back in base packages that the switch from base group
+  # to base PKG yanked and be specific on OpenRC to avoid conflicts
   if [[ ! $init ]]; then
-	  pkg+=(systemd-udev systemd-libudev)
+
+	  pkg+=(cryptsetup device-mapper dhcpcd e2fsprogs inetutils \
+		  jfsutils linux-libre logrotate lvm2 man-db mdadm nano \
+		  netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
+		  texinfo usbutils vi xfsprogs your-freedom systemd-udev \
+		  systemd-libudev)
   else
-	  pkg+=(eudev-libudev)
+	  pkg+=(systemd-libs-dummy)
   fi
   
   local pkg_guest_cache=(ca-certificates-utils)
