@@ -185,8 +185,8 @@ EOF
 
   # Add back in the packages that the switch from base group
   # to base PKG yanked
-  pkg+=(cryptsetup device-mapper dhcpcd e2fsprogs inetutils \
-       jfsutils linux-libre logrotate lvm2 man-db mdadm nano \
+  pkg+=("cryptsetup$init" "device-mapper$init" "dhcpcd$init" e2fsprogs inetutils \
+       jfsutils linux-libre logrotate "lvm2$init" man-db "mdadm$init" nano \
        netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
        texinfo usbutils vi xfsprogs your-freedom ) 
 
