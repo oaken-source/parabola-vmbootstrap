@@ -182,6 +182,15 @@ EOF
 
   # prepare lists of packages
   local pkg=("base$init" "openssh$init" openresolv ldns)
+
+  # Add back in the packages that the switch from base group
+  # to base PKG yanked
+  pkg+=(cryptsetup device-mapper dhcpcd e2fsprogs inetutils \
+       jfsutils linux-libre logrotate lvm2 man-db mdadm nano \
+       netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
+       texinfo usbutils vi xfsprogs your-freedom ) 
+
+
   case "$arch" in
     i686|x86_64) pkg+=(grub) ;;
   esac
@@ -192,7 +201,9 @@ EOF
   
   # Be specific to skip around some conflicts
   if [[ ! $init ]]; then
-	  pkg+=("systemd-udev")
+	  pkg+=(systemd-udev systemd-libudev)
+  else
+	  pkg+=(eudev-libudev)
   fi
   
   local pkg_guest_cache=(ca-certificates-utils)
