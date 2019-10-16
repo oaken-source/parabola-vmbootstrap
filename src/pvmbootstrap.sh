@@ -196,10 +196,10 @@ EOF
   if [[ ! $init ]]; then
 
 	  pkg+=(cryptsetup device-mapper dhcpcd e2fsprogs inetutils \
-		  jfsutils linux-libre logrotate lvm2 man-db mdadm nano \
-		  netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
-		  texinfo usbutils vi xfsprogs your-freedom systemd-udev \
-		  systemd-libudev)
+		jfsutils linux-libre logrotate lvm2 man-db mdadm nano \
+		netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
+		texinfo usbutils vi xfsprogs your-freedom systemd-udev \
+		systemd-libudev)
   else
 	  pkg+=(systemd-libs-dummy)
   fi
