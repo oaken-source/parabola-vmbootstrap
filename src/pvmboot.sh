@@ -19,29 +19,30 @@
 ###############################################################################
 
 # shellcheck source=/usr/lib/libretools/messages.sh
-. "$(librelib messages)"
+source "$(librelib messages)"
+
 
 usage() {
-  print "usage: %s [-h] IMG [ARG]..." "${0##*/}"
-  prose "Determine the architecture of IMG and boot it using qemu. IMG is assumed
+  print "USAGE: %s [-h] <img> [qemu-args ...]" "${0##*/}"
+  prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
-         created using pvmbootstrap. The started instances are assigned 1GiB of
+         created using pvmbootstrap. The started instance is assigned 1G of
          RAM and one SMP core."
   echo
   prose "When a graphical desktop environment is available, start the machine
          normally, otherwise append -nographic to the qemu options. This behavior
          can be forced by unsetting DISPLAY manually, for example through:"
   echo
-  echo  "  DISPLAY= ${0##*/} IMG ..."
+  echo  "  DISPLAY= ${0##*/} ./an.img"
   echo
-  prose "When the architecture of IMG is compatible with the host architecture,
+  prose "When the architecture of <img> is compatible with the host architecture,
          append -enable-kvm to the qemu arguments."
   echo
-  prose "Further arguments provided after IMG will be passed unmodified to the
+  prose "Further arguments provided after <img> will be passed unmodified to the
          qemu invocation. This can be used to allocate more resources to the virtual
          machine, for example:"
   echo
-  echo  "  ${0##*/} IMG -m 2G -smp 2"
+  echo  "  ${0##*/} ./an.img -m 2G -smp 2"
   echo
   echo  "Supported options:"
   echo  "  -h   Display this help and exit"
@@ -124,38 +125,36 @@ pvm_guess_qemu_args() {
   # if we're running a supported arch, enable kvm
   if pvm_native_arch "$2"; then qemu_args+=(-enable-kvm); fi
 
-  # otherwise, decide by target arch
+  # set arch-specific args
+  local kernel_console
   case "$2" in
     i386|x86_64|ppc64)
-      qemu_args+=(-m 2G "$1")
+      qemu_args+=(-m 1G -hda "$1")
       # unmount the unneeded virtual drive early
       pvm_umount ;;
     arm)
-      qemu_args+=(
-        -machine virt
-        -m 2G
-        -kernel "$workdir"/vmlinuz-linux-libre
-        -initrd "$workdir"/initramfs-linux-libre.img
-        -append "console=tty0 console=ttyAMA0 rw root=/dev/vda3"
-        -drive "if=none,file=$1,format=raw,id=hd"
-        -device "virtio-blk-device,drive=hd"
-        -netdev "user,id=mynet"
-        -device "virtio-net-device,netdev=mynet") ;;
+      kernel_console="console=tty0 console=ttyAMA0 "
+      qemu_args+=(-machine virt
+                  -m       1G
+                  -kernel  "$workdir"/vmlinuz-linux-libre
+                  -initrd  "$workdir"/initramfs-linux-libre.img
+                  -append  "${kernel_console}rw root=/dev/vda3"
+                  -drive   "if=none,file=$1,format=raw,id=hd"
+                  -device  "virtio-blk-device,drive=hd"
+                  -netdev  "user,id=mynet"
+                  -device  "virtio-net-device,netdev=mynet") ;;
     riscv64)
-      qemu_args+=(
-        -machine virt
-        -m 2G
-        -kernel "$workdir"/bbl
-        -append "rw root=/dev/vda"
-        -drive "file=${loopdev}p3,format=raw,id=hd0"
-        -device "virtio-blk-device,drive=hd0"
-        -object "rng-random,filename=/dev/urandom,id=rng0"
-        -device "virtio-rng-device,rng=rng0"
-        -device "virtio-net-device,netdev=usernet"
-        -netdev "user,id=usernet")
-      if [ -z "$DISPLAY" ]; then
-        qemu_args+=(-append "console=ttyS0 rw root=/dev/vda");
-      fi ;;
+      kernel_console=$( [ -z "$DISPLAY" ] && echo "console=ttyS0 " )
+      qemu_args+=(-machine virt
+                  -m       1G
+                  -kernel  "$workdir"/bbl
+                  -append  "${kernel_console}rw root=/dev/vda"
+                  -drive   "file=${loopdev}p3,format=raw,id=hd0"
+                  -device  "virtio-blk-device,drive=hd0"
+                  -object  "rng-random,filename=/dev/urandom,id=rng0"
+                  -device  "virtio-rng-device,rng=rng0"
+                  -netdev  "user,id=usernet"
+                  -device  "virtio-net-device,netdev=usernet") ;;
     *)
       error "%s: unable to determine default qemu args" "$1"
       return "$EXIT_FAILURE" ;;
@@ -177,15 +176,9 @@ main() {
   done
   local shiftlen=$(( OPTIND - 1 ))
   shift $shiftlen
-  if [ "$#" -lt 1 ]; then usage >&2; exit "$EXIT_INVALIDARGUMENT"; fi
-
   local imagefile="$1"
   shift
-
-  if [ ! -e "$imagefile" ]; then
-    error "%s: file not found" "$imagefile"
-    exit "$EXIT_FAILURE"
-  fi
+  [ ! -e "$imagefile" ] && error "%s: file not found" "$imagefile" && exit "$EXIT_FAILURE"
 
   local workdir loopdev
   pvm_mount "$imagefile" || exit
