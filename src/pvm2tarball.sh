@@ -70,17 +70,21 @@ pvm_mount() {
   fi
 
   # find the boot partition
-  bootpart="$(findmnt -senF "$workdir"/etc/fstab /boot | awk '{print $2}')"
-
-  if [ -n "$bootpart" ]; then
-    msg "found boot filesystem partition: %s" "$bootpart"
+  if (( $(find /boot/ -name initramfs-* | wc -l) > 0 )) && \
+     (( $(find /boot/ -name vmlinuz-*   | wc -l) > 0 )); then
+    msg "found /boot on root filesystem partition"
   else
-    error "%s: unable to determine boot partition." "$imagefile"
-    return "$EXIT_FAILURE"
-  fi
+    bootpart="$(findmnt -senF "$workdir"/etc/fstab /boot | awk '{print $2}')"
 
-  # mount and be happy
-  sudo mount "$bootpart" "$workdir"/boot || return
+    if [ -n "$bootpart" ]; then
+      # mount and be happy
+      msg "found boot filesystem partition: %s" "$bootpart"
+      sudo mount "$bootpart" "$workdir"/boot || return "$EXIT_FAILURE"
+    else
+      error "%s: unable to determine boot filesystem partition." "$imagefile"
+      return "$EXIT_FAILURE"
+    fi
+  fi
 }
 
 pvm_umount() {
