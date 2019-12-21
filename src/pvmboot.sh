@@ -21,11 +21,14 @@
 # shellcheck source=/usr/lib/libretools/messages.sh
 source "$(librelib messages)"
 
+readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_RAM_MB=1000
+
+Kernel=$DEF_KERNEL
 
 
 usage() {
-  print "USAGE: %s [-h] <img> [qemu-args ...]" "${0##*/}"
+  print "USAGE: %s [-h] [-k <kernel>] <img> [qemu-args ...]" "${0##*/}"
   prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
          created using pvmbootstrap. The started instances are assigned
@@ -47,7 +50,9 @@ usage() {
   echo  "  ${0##*/} IMG -m 2G -smp 2"
   echo
   echo  "Supported options:"
-  echo  "  -h   Display this help and exit"
+  echo  "  -h           Display this help and exit"
+  echo  "  -k <kernel>  Choose the kernel to boot, for images with no bootloader"
+  echo  "               (default: $DEF_KERNEL)"
   echo
   echo  "This script is part of parabola-vmbootstrap. source code available at:"
   echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
@@ -140,8 +145,8 @@ pvm_guess_qemu_args() {
       kernel_console="console=tty0 console=ttyAMA0 "
       qemu_args+=(-machine virt
                   -m       $DEF_RAM_MB
-                  -kernel  "$workdir"/vmlinuz-linux-libre
-                  -initrd  "$workdir"/initramfs-linux-libre.img
+                  -kernel "$workdir"/vmlinuz-${Kernel}
+                  -initrd "$workdir"/initramfs-${Kernel}.img
                   -append  "${kernel_console}rw root=/dev/vda3"
                   -drive   "if=none,file=$1,format=raw,id=hd"
                   -device  "virtio-blk-device,drive=hd"
@@ -172,9 +177,10 @@ main() {
   fi
 
   # parse options
-  while getopts 'h' arg; do
+  while getopts 'hk:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
+      k) Kernel="$OPTARG";;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done

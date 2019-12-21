@@ -24,6 +24,7 @@ source "$(librelib messages)"
 
 
 # defaults
+readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_MIRROR="https://repo.parabola.nu/\$repo/os/\$arch"
 readonly DEF_IMG_GB=64
 
@@ -32,14 +33,16 @@ readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 
 # options
 Hooks=()
+Kernels=($DEF_KERNEL)
 Mirror=$DEF_MIRROR
+IsNonsystemd=0
 ImgSizeGb=$DEF_IMG_GB
-Init=''
 
 
 usage() {
   print "USAGE:"
-  print "  pvmbootstrap [-h] [-H <hook>] [-M <mirror>] [-O] [-s <img_size>] <img> <arch>"
+  print "  pvmbootstrap [-h] [-H <hook>] [-k <kernel>] [-M <mirror>]"
+  print "               [-O] [-s <img_size>] <img> <arch>"
   echo
   prose "Produce preconfigured parabola GNU/Linux-libre virtual machine instances."
   echo
@@ -54,14 +57,20 @@ usage() {
   echo  "                  the path to a script, which will be executed once within"
   echo  "                  the running VM, or one of the pre-defined hooks described"
   echo  "                  below. This option can be specified multiple times."
+  echo  "  -k <kernel>     Specify an additional kernel package (default: $DEF_KERNEL)."
+  echo  "                  This option can be specified multiple times; but note that"
+  echo  "                  '$DEF_KERNEL' will be installed, regardless of this option."
   echo  "  -M <mirror>     Specify a different mirror from which to fetch packages"
   echo  "                  (default: $DEF_MIRROR)"
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
+  echo  "                  NOTE: This option is currently ignored; because"
+  echo  "                        the 'preinit' hook is implemented as a systemd service."
   echo  "  -s <img_size>   Set the size (in GB) of the VM image (minimum: $MIN_GB, default: $DEF_IMG_GB)"
   echo
   echo  "Pre-defined hooks:"
   echo  "  ethernet-dhcp:  Configure and enable an ethernet device in the virtual"
   echo  "                  machine, using openresolv, dhcpcd, and systemd-networkd"
+  echo  "                  (systemd only)"
   echo
   echo  "This script is part of parabola-vmbootstrap. source code available at:"
   echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
@@ -180,35 +189,27 @@ pvm_bootstrap() {
   # prepare pacstrap config
   local pacconf repos
   pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return "$EXIT_FAILURE"
-  repos=('libre' 'core' 'extra' 'community' 'pcr')
+  repos=(libre core extra community pcr)
+  (( $IsNonsystemd )) && repos=('nonsystemd' ${repos[@]})
   echo -e "[options]\nArchitecture = $arch\n\n" > "$pacconf"
   for repo in ${repos[@]}; do echo -e "[$repo]\nServer = $Mirror\n" >> "$pacconf"; done;
 
   # prepare lists of packages
-  # FIXME: [nonsystemd] is in a transitional phase
-  #        package name suffices such as '-opernrc' will be removed soon
-  #        ideally, the install process will be identical for either systemd or openrc
-  #          depending only on which repos are enabled
-  local pkgs=("base$Init" "openssh$Init" openresolv ldns)
+  local kernels=(${Kernels[@]})
+  local pkgs=(base parabola-base ${Kernels[@]} openssh)
   case "$arch" in
     i686|x86_64) pkgs+=(grub) ;;
   esac
   case "$arch" in
     riscv64) ;;
-    *) pkgs+=("haveged$Init" net-tools) ;;
+    *) pkgs+=("haveged" net-tools) ;;
   esac
-  if [[ ! $Init ]]; then
-    # FIXME: Add back in base packages that the switch from base group
-    #          to base PKG yanked and be specific on OpenRC to avoid conflicts
-    #        ideally, we will assign these to a new 'base-extras' group
-    pkgs+=(cryptsetup device-mapper dhcpcd e2fsprogs inetutils           \
-           jfsutils linux-libre logrotate lvm2 man-db mdadm nano         \
-           netctl pacman-mirrorlist perl reiserfsprogs s-nail sysfsutils \
-           texinfo usbutils vi xfsprogs your-freedom systemd-udev        \
-           systemd-libudev                                               )
-  else
-    pkgs+=(systemd-libs-dummy)
-  fi
+  ((   $IsNonsystemd )) &&                                              && pkgs+=(libelogind)
+  (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd)
+
+  # remove duplicate package names
+  Kernels=()
+  for kernel in $(printf "%s\n" "${kernels[@]}" | sort -u) ; do Kernels+=($kernel) ; done ;
 
   local pkg_guest_cache=(ca-certificates-utils)
 
@@ -270,15 +271,17 @@ pvm_bootstrap() {
       ;;
   esac
 
-  # regenerate the initcpio, skipping the autodetect hook
-  local kernel='linux-libre'
-  local preset_file="$workdir"/etc/mkinitcpio.d/${kernel}.preset
-  local default_options="default_options=\"-S autodetect\""
-  msg "regenerating initcpio for kernel: '${kernel}'"
-  sudo cp "$preset_file"{,.backup}                                 || return "$EXIT_FAILURE"
-  echo "$default_options" | sudo tee -a "$preset_file" > /dev/null || return "$EXIT_FAILURE"
-  sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}              || return "$EXIT_FAILURE"
-  sudo mv "$preset_file"{.backup,}                                 || return "$EXIT_FAILURE"
+  # regenerate the initcpio(s), skipping the autodetect hook
+  for kernel in ${Kernels[@]}
+  do
+    local preset_file="$workdir"/etc/mkinitcpio.d/${kernel}.preset
+    local default_options="default_options=\"-S autodetect\""
+    msg "regenerating initcpio for kernel: '${kernel}'"
+    sudo cp "$preset_file"{,.backup}                                 || return "$EXIT_FAILURE"
+    echo "$default_options" | sudo tee -a "$preset_file" > /dev/null || return "$EXIT_FAILURE"
+    sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}              || return "$EXIT_FAILURE"
+    sudo mv "$preset_file"{.backup,}                                 || return "$EXIT_FAILURE"
+  done
 
   # initialize the pacman keyring
   msg "initializing the pacman keyring"
@@ -289,6 +292,7 @@ pvm_bootstrap() {
   msg "preparing hooks"
   sudo mkdir -p "$workdir/root/hooks"
   [ "${#Hooks[@]}" -eq 0 ] || sudo cp -v "${Hooks[@]}" "$workdir"/root/hooks/
+  (( $IsNonsystemd )) && sudo rm "$workdir"/root/hooks/hook-ethernet-dhcp.sh # systemd-only hook
 
   # create a master hook script
   local hooks_success_msg="[hooks.sh] pre-init hooks successful"
@@ -303,7 +307,7 @@ systemctl disable preinit.service
 locale-gen
 
 # fix the mkinitcpio
-mkinitcpio -p linux-libre
+for kernel in ${Kernels[@]} ; do mkinitcpio -p \$kernel ; done ;
 
 # fix ca-certificates
 pacman -U --noconfirm /var/cache/pacman/pkg/ca-certificates-utils-*.pkg.tar.xz
@@ -401,7 +405,7 @@ main() {
   fi
 
   # parse options
-  while getopts 'hOs:M:H:' arg; do
+  while getopts 'hH:k:M:Os:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
       H) if [ -e   "$THIS_DIR/hooks/hook-$OPTARG.sh" ]; then                  # in-tree
@@ -413,8 +417,9 @@ main() {
          else
            warning "%s: hook does not exist" "$OPTARG"
          fi ;;
+      k) Kernels+=($OPTARG);;
       M) Mirror="$OPTARG";;
-      O) Init="-openrc";;
+      O) IsNonsystemd=0;; # TODO:
       s) ImgSizeGb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
