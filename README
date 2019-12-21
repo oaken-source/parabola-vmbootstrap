@@ -5,70 +5,104 @@ parabola-vmbootstrap
 This is a collection of scripts for creating and booting parabola virtual
 machine images for use with qemu.
 
+
+------------------------------
 virtual machine image creation
 ------------------------------
 
 To create a new virtual machine image, run
 
-  $> ./pvmbootstrap.sh [path to image] [arch]
+  $> pvmbootstrap [options] <path-to-image> <arch>
 
-where arch is one of the supported parabola arches, which are currently:
+... where <arch> is one of the parabola arches, which are currently:
 
-  official:   [ i686, x86_64, armv7h ]
-  unofficial: [ ppc64le, riscv64 ]
+  supported:    [ armv7h, i686, x86_64 ]
+  experimental: [ ppc64le, riscv64 ]
 
-the script will attempt to bootstrap a virtual machine of the selected
-archituecture in the output file specified. If the output file already exists,
+The script will attempt to bootstrap a virtual machine of the selected
+archituecture to the output file specified. If the output file already exists,
 the script will emit a warning and ask for confirmation to proceed.
 
-the creation can be influenced by providing one or more of the following
-arguments to pvmbootstrap.sh:
+The creation can be influenced by providing one or more of the following
+options to pvmbootstrap:
 
-  -s size   -- set the size of the created VM image (default: 64G)
-  -M mirror -- set the mirror to fetch packages from
-               (default: https://repo.parabola.nu/$repo/os/$arch)
-  -H hook   -- add a confiuration hook to be executed. this can be the path to
-               a shell script or one of the existing hooks described below
+  -H <hook>      -- Enable a hook to customize the created image. This can be
+                    the path to a custom script, or one of the predefined hooks
+                    described below. The VM will boot the newly created image,
+                    and the hook script(s) will be executed once each within
+                    the running VM. This option can be specified multiple times.
+  -k <kernel>    -- Choose an additional kernel package (default: linux-libre).
+                    This option can be specified multiple times; but note that
+                    'linux-libre' will be installed, regardless of this option.
+  -M <mirror>    -- Set the mirror from which to fetch packages
+                    (default: https://repo.parabola.nu/$repo/os/$arch)
+  -O             -- Bootstrap an openrc system instead of a systemd one
+  -p <package>   -- Specify additional packages to be installed in the VM image.
+                    This option can be specified multiple times.
+  -s <img_size>  -- Set the size (in GB) of the VM image (minimum: 1, default: 64)
+  -S <swap_size> -- Set the size (in MB) of the swap partition (default: 0)
 
 The creation hooks currently supported are:
 
-ethernet-dhcp:
+'ethernet-dhcp':
 
-  this hook will setup ethernet in the VM by enabling systemd-resolved and
+  This hook will setup ethernet in the VM by enabling systemd-resolved and
   openresolv properly, as well as creating and enabling a systemd-networkd
   configuration.
 
+
+--------------------
 virtual machine boot
 --------------------
 
 To boot a created virtual machine, run:
 
-  $> ./pvmboot.sh [path to image] [additional qemu args...]
+  $> pvmboot [options] <path_to_image> [qemu-args ...]
 
-the script will attempt to determine the architecture of the provided virtual
+The script will attempt to determine the architecture of the provided virtual
 machine image, and set the qemu executable and sane default flags for the qemu
 invocation automatically, including kvm acceleration, if available for the
 target architecture.
 
-additionally, the script will evaluate the DISPLAY environment variable to
+Additionally, the script will evaluate the DISPLAY environment variable to
 determine whether a graphical desktop environment is available, and will start
 the image in serial console mode if necessary. This behavior can be forced by
 unsetting DISPLAY before executing the script:
 
-  $> DISPLAY= ./pvmboot.sh [...]
+  $> DISPLAY= pvmboot ./an.img
 
-The default flags can be overwritten or extended, for example to allocate more
-memory to the machine, by specifying additional qemu parameters on the command
+The default kernel installed by pvmbootstrap is 'linux-libre'.
+The -k option ca be used to specify an alternate kernel to boot.
+
+  $> pvmboot -k linux-libre-lts ./an.img
+
+When the VM will boot into graphical mode, the serial console can be redirected
+to the host console by passing the -r option.
+
+  $> pvmboot -r ./an.img
+
+The qemu launch configuration can be customized, for example to allocate more
+memory to the machine, by specifying additional qemu options on the command
 line following the virtual machine image name:
 
-  $> DISPLAY= ./pvmboot [path to image] -m 2G
+  $> DISPLAY= pvmboot ./an.img -m 2G
 
+
+------------------------
 release tarball creation
 ------------------------
 
 To convert a virtual machine image into a parabola release tarball, run:
 
-  $> ./pvm2tarball.sh [path to image]
+  $> pvm2tarball <path_to_image>
 
 This will attempt to mount the rootfs and the /boot partition, and tar the
-contents to an output file, filtering out all unneeded files.
+contents to an output file, filtering out all unneeded files. The /boot
+partition is optional if the kernel and initramfs are in /boot; though
+pvmbootstrap always creates a /boot partition.
+
+for example, to generate the parabola armv7h release tarball:
+
+  $> img_filename=parabola-systemd-cli-armv7h-tarball-$(date +%Y.%m).img
+  $> pvmbootstrap -s 1 -H ethernet-dhcp $img_filename armv7h
+  $> pvm2tarball $img_filename

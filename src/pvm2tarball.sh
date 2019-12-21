@@ -3,6 +3,7 @@
 #     parabola-vmbootstrap -- create and start parabola virtual machines      #
 #                                                                             #
 #     Copyright (C) 2017 - 2019  Andreas Grapentin                            #
+#     Copyright (C) 2019 - 2020  bill-auger                                   #
 #                                                                             #
 #     This program is free software: you can redistribute it and/or modify    #
 #     it under the terms of the GNU General Public License as published by    #
@@ -22,20 +23,22 @@
 source "$(librelib messages)"
 
 usage() {
-  print "USAGE: %s [-h] [-o FILE] IMG" "${0##*/}"
-  prose "Produce a parabola release tarball from IMG."
+  print "USAGE:"
+  print "  pvm2tarball [-h] [-o <FILENAME>] <IMG>"
   echo
-  prose "IMG is expected to be a valid parabola image, ideally freshly bootstrapped
-         using pvmbootstrap. If FILE is not specifed, generate an archive name
-         from IMG and place it in the current working directory"
+  prose "Produce a parabola release tarball from <IMG>."
+  echo
+  prose "<IMG> is expected to be a valid parabola image, ideally freshly bootstrapped
+         using pvmbootstrap. If <FILENAME> is not specifed, generate an archive name
+         from <IMG> and place it in the current working directory"
   echo
   echo  "Supported options:"
-  echo  "  -o FILE   Write the generated tar archive to FILE instead of"
-  echo  "              generating a name for the archive from IMG"
-  echo  "  -h        Display this help and exit"
+  echo  "  -o <FILENAME>  Write the generated tar archive to FILE instead of"
+  echo  "                   generating a name for the archive from IMG"
+  echo  "  -h             Display this help and exit"
   echo
   echo  "This script is part of parabola-vmbootstrap. source code available at:"
-  echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
+  echo  "  <https://git.parabola.nu/parabola-vmbootstrap.git>"
 }
 
 pvm_mount() {

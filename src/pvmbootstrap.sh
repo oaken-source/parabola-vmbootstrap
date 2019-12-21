@@ -3,6 +3,7 @@
 #     parabola-vmbootstrap -- create and start parabola virtual machines      #
 #                                                                             #
 #     Copyright (C) 2017 - 2019  Andreas Grapentin                            #
+#     Copyright (C) 2019 - 2020  bill-auger                                   #
 #                                                                             #
 #     This program is free software: you can redistribute it and/or modify    #
 #     it under the terms of the GNU General Public License as published by    #
@@ -34,6 +35,7 @@ readonly DEF_SWAP_MB=0
 
 # misc
 readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+readonly GUEST_CACHED_PKGS=('ca-certificates-utils')
 
 # options
 Hooks=()
@@ -85,7 +87,7 @@ usage() {
   echo  "                  (systemd only)"
   echo
   echo  "This script is part of parabola-vmbootstrap. source code available at:"
-  echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
+  echo  "  <https://git.parabola.nu/parabola-vmbootstrap.git>"
 }
 
 pvm_native_arch() {
@@ -95,19 +97,19 @@ pvm_native_arch() {
 }
 
 pvm_bootstrap() {
-  msg "starting creation of %s image: %s" "$arch" "$file"
+  msg "starting creation of %s image: %s" "$arch" "$imagefile"
 
   # create the raw image file
-  qemu-img create -f raw "$file" "${ImgSizeGb}G" || return "$EXIT_FAILURE"
+  qemu-img create -f raw "$imagefile" "${ImgSizeGb}G" || return "$EXIT_FAILURE"
 
   # prepare for cleanup
   trap 'pvm_cleanup' INT TERM RETURN
 
   # mount the virtual disk
   local workdir loopdev
-  workdir="$(mktemp -d -t pvm-rootfs-XXXXXXXXXX)"  || return "$EXIT_FAILURE"
-  loopdev="$(sudo losetup -fLP --show "$file")"    || return "$EXIT_FAILURE"
-  sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return "$EXIT_FAILURE"
+  workdir="$(mktemp -d -t pvm-rootfs-XXXXXXXXXX)"    || return "$EXIT_FAILURE"
+  loopdev="$(sudo losetup -fLP --show "$imagefile")" || return "$EXIT_FAILURE"
+  sudo dd if=/dev/zero of="$loopdev" bs=1M count=8   || return "$EXIT_FAILURE"
 
   # partition
   local boot_begin="$( [[ "$arch" =~ i686|x86_64 ]] && echo 2 || echo 1 )MiB"
@@ -182,8 +184,8 @@ pvm_bootstrap() {
     # target arch can't execute natively, pacstrap is going to need help by qemu
     local qemu_arch
     case "$arch" in
-      armv7h) qemu_arch=arm ;;
-      *) qemu_arch="$arch" ;;
+      armv7h) qemu_arch=arm     ;;
+      *     ) qemu_arch="$arch" ;;
     esac
 
     local qemu_user_static=$(sudo grep -l -F -e "interpreter /usr/bin/qemu-$qemu_arch-"   \
@@ -208,30 +210,27 @@ pvm_bootstrap() {
   echo -e "[options]\nArchitecture = $arch\n\n" > "$pacconf"
   for repo in ${repos[@]}; do echo -e "[$repo]\nServer = $Mirror\n" >> "$pacconf"; done;
 
-  # prepare lists of packages
-  local kernels=(${Kernels[@]})
-  local pkgs=(${DEF_PKGS[@]} ${Kernels[@]} ${Pkgs[@]})
+  # prepare package lists
+  local kernels=(     ${Kernels[@]}                           )
+  local pkgs=(        ${DEF_PKGS[@]} ${Kernels[@]} ${Pkgs[@]} )
+  local pkgs_cached=( ${GUEST_CACHED_PKGS[@]}                 )
   case "$arch" in
-    i686|x86_64) pkgs+=(grub) ;;
-  esac
-  case "$arch" in
-    riscv64) ;;
-    *) pkgs+=("haveged" net-tools) ;;
+    i686|x86_64) pkgs+=(grub)              ;;
+    riscv64    )                           ;;
+    *          ) pkgs+=(haveged net-tools) ;;
   esac
   ((   $IsNonsystemd )) &&                                              && pkgs+=(libelogind)
   (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd)
 
-  # remove duplicate package names
+  # minimize package lists
   Kernels=() ; Pkgs=() ;
   for kernel in $(printf "%s\n" "${kernels[@]}" | sort -u) ; do Kernels+=($kernel) ; done ;
   for pkg    in $(printf "%s\n" "${pkgs[@]}"    | sort -u) ; do Pkgs+=($pkg)       ; done ;
 
-  local pkg_guest_cache=(ca-certificates-utils)
-
   # pacstrap! :)
   msg "installing packages into the work chroot"
-  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"            || return "$EXIT_FAILURE"
-  sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkg_guest_cache[@]}" || return "$EXIT_FAILURE"
+  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"        || return "$EXIT_FAILURE"
+  sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkgs_cached[@]}" || return "$EXIT_FAILURE"
 
   # create an fstab
   msg "generating /etc/fstab"
@@ -385,13 +384,13 @@ EOF
     error "pvmboot not available -- unable to run hooks"
     return "$EXIT_FAILURE"
   fi
-  pvmboot_cmd+=("$file" "${qemu_flags[@]}")
+  pvmboot_cmd+=("$imagefile" "${qemu_flags[@]}")
   exec 3>&1
   msg "booting the machine to run the pre-init hooks"
   DISPLAY='' "${pvmboot_cmd[@]}" | tee /dev/fd/3 | grep -q -F "$hooks_success_msg"
   local res=$?
   exec 3>&-
-  ! (( $res )) || error "%s: failed to complete preinit hooks" "$file"
+  ! (( $res )) || error "%s: failed to complete preinit hooks" "$imagefile"
 
   return $res
 }
@@ -443,7 +442,7 @@ main() {
 
   local shiftlen=$(( OPTIND - 1 ))
   shift $shiftlen
-  local file="$1"
+  local imagefile="$1"
   local arch="$2"
   local has_params=$( (( $# == 2                                           )) && echo 1 || echo 0 )
   local has_space=$(  (( ($ImgSizeGb*1000) >= ($MIN_GB*1000) + $SwapSizeMb )) && echo 1 || echo 0 )
@@ -453,32 +452,30 @@ main() {
 
   # determine if the target arch is supported
   case "$arch" in
-    i686|x86_64|armv7h) ;;
-    ppc64le|riscv64)
-      warning "arch %s is experimental" "$arch";;
-    *)
-      error "arch %s is unsupported" "$arch"
-      exit "$EXIT_INVALIDARGUMENT";;
+    i686|x86_64|armv7h)                                           ;;
+    ppc64le|riscv64   ) warning "arch %s is experimental" "$arch" ;;
+    *                 ) error "arch %s is unsupported" "$arch"
+                        exit "$EXIT_INVALIDARGUMENT"              ;;
   esac
 
   # determine whether the target output file already exists
-  if [ -e "$file" ]; then
-    warning "%s: file exists. Continue? [y/N]" "$file"
+  if [ -e "$imagefile" ]; then
+    warning "%s: file exists. Continue? [y/N]" "$imagefile"
     read -p " " -n 1 -r
     echo
     if [[ ! $REPLY =~ ^[Yy]$ ]]; then
       exit "$EXIT_FAILURE"
     fi
-    rm -f "$file" || exit
+    rm -f "$imagefile" || exit
   fi
 
   # create the virtual machine
   if ! pvm_bootstrap; then
-    error "bootstrap failed for image: %s" "$file"
+    error "bootstrap failed for image: %s" "$imagefile"
     exit "$EXIT_FAILURE"
   fi
 
-  msg "bootstrap complete for image: %s" "$file"
+  msg "bootstrap complete for image: %s" "$imagefile"
 }
 
 main "$@"

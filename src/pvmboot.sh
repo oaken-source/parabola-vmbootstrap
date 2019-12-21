@@ -3,6 +3,7 @@
 #     parabola-vmbootstrap -- create and start parabola virtual machines      #
 #                                                                             #
 #     Copyright (C) 2017 - 2019  Andreas Grapentin                            #
+#     Copyright (C) 2019 - 2020  bill-auger                                   #
 #                                                                             #
 #     This program is free software: you can redistribute it and/or modify    #
 #     it under the terms of the GNU General Public License as published by    #
@@ -29,7 +30,9 @@ RedirectSerial=0
 
 
 usage() {
-  print "USAGE: %s [-h] [-k <kernel>] [-r] <img> [qemu-args ...]" "${0##*/}"
+  print "USAGE:"
+  print "  pvmboot [-h] [-k <kernel>] [-r] <img> [qemu-args ...]"
+  echo
   prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
          created using pvmbootstrap. The started instances are assigned
@@ -57,63 +60,63 @@ usage() {
   echo  "  -r           Redirect serial console to host console, even in graphics mode"
   echo
   echo  "This script is part of parabola-vmbootstrap. source code available at:"
-  echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
+  echo  "  <https://git.parabola.nu/parabola-vmbootstrap.git>"
 }
 
 pvm_mount() {
-  if ! file "$1" | grep -q ' DOS/MBR '; then
-    error "%s: does not seem to be a raw qemu image." "$1"
+  if ! file "$imagefile" | grep -q ' DOS/MBR '; then
+    error "%s: does not seem to be a raw qemu image." "$imagefile"
     return "$EXIT_FAILURE"
   fi
 
   msg "mounting filesystems"
   trap 'pvm_umount' INT TERM EXIT
 
-  workdir="$(mktemp -d -t pvm-XXXXXXXXXX)"   || return "$EXIT_FAILURE"
-  loopdev="$(sudo losetup -fLP --show "$1")" || return "$EXIT_FAILURE"
-  sudo mount "$loopdev"p1 "$workdir" \
-    || sudo mount "$loopdev"p2 "$workdir"    || return "$EXIT_FAILURE"
+  workdir="$(mktemp -d -t pvm-XXXXXXXXXX)"           || return "$EXIT_FAILURE"
+  loopdev="$(sudo losetup -fLP --show "$imagefile")" || return "$EXIT_FAILURE"
+  sudo mount "$loopdev"p1 "$workdir"                 || \
+  sudo mount "$loopdev"p2 "$workdir"                 || return "$EXIT_FAILURE"
 }
 
 pvm_umount() {
-  msg "un-mounting filesystems"
   trap - INT TERM EXIT
 
   [ -n "$workdir" ] && (sudo umount "$workdir"; rmdir "$workdir")
-  unset workdir
   [ -n "$loopdev" ] && sudo losetup -d "$loopdev"
+  unset workdir
   unset loopdev
 }
 
 pvm_probe_arch() {
   local kernel
+
   kernel=$(find "$workdir" -maxdepth 1 -type f -iname '*vmlinu*' | head -n1)
   if [ -z "$kernel" ]; then
-    warning "%s: unable to find kernel binary" "$1"
+    warning "%s: unable to find kernel binary" "$imagefile"
     return "$EXIT_FAILURE"
   fi
 
   # attempt to get kernel arch from elf header
   arch="$(readelf -h "$kernel" 2>/dev/null | grep Machine | awk '{print $2}')"
   case "$arch" in
-    PowerPC64) arch=ppc64;   return "$EXIT_SUCCESS";;
-    RISC-V   ) arch=riscv64; return "$EXIT_SUCCESS";;
-    *        ) arch="";;
+    PowerPC64) arch=ppc64   ; return "$EXIT_SUCCESS" ;;
+    RISC-V   ) arch=riscv64 ; return "$EXIT_SUCCESS" ;;
+    *        ) arch=""                               ;;
   esac
 
   # attempt to get kernel arch from objdump
   arch="$(objdump -f "$kernel" 2>/dev/null | grep architecture: | awk '{print $2}' | tr -d ',')"
   case "$arch" in
-    i386  ) arch=i386;   return "$EXIT_SUCCESS";;
-    i386:*) arch=x86_64; return "$EXIT_SUCCESS";;
-    *     ) arch="";;
+    i386  ) arch=i386   ; return "$EXIT_SUCCESS" ;;
+    i386:*) arch=x86_64 ; return "$EXIT_SUCCESS" ;;
+    *     ) arch=""                              ;;
   esac
 
   # attempt to get kernel arch from file magic
   arch="$(file "$kernel")"
   case "$arch" in
-    *"ARM boot executable"*) arch=arm; return "$EXIT_SUCCESS";;
-    *                      ) arch="";;
+    *"ARM boot executable"*) arch=arm ; return "$EXIT_SUCCESS" ;;
+    *                      ) arch=""                           ;;
   esac
 
   # no more ideas; giving up.
@@ -121,10 +124,11 @@ pvm_probe_arch() {
 
 pvm_native_arch() {
   local arch
-	case "$1" in
-		arm*) arch=armv7l;;
-		*)    arch="$1";;
-	esac
+
+  case "$1" in
+    arm*) arch=armv7l ;;
+    *   ) arch="$1"   ;;
+  esac
 
   setarch "$arch" /bin/true 2>/dev/null || return
 }
@@ -136,25 +140,25 @@ pvm_guess_qemu_args() {
   fi
 
   # if we're running a supported arch, enable kvm
-  if pvm_native_arch "$2"; then qemu_args+=(-enable-kvm); fi
+  if pvm_native_arch "$arch"; then qemu_args+=(-enable-kvm); fi
 
   # find root filesystem partition (necessary for arches without bootloader)
-  local root_loopdev_n=$(echo $(parted "$1" print 2> /dev/null | grep ext4) | cut -d ' ' -f 1)
+  local root_loopdev_n=$(echo $(parted "$imagefile" print 2> /dev/null | grep ext4) | cut -d ' ' -f 1)
   local root_loopdev="$loopdev"p$root_loopdev_n
   local root_vdev=/dev/vda$root_loopdev_n
   if [[ -b "$root_loopdev" ]]
   then
       msg "found root filesystem loop device: %s" "$root_loopdev"
   else
-      error "%s: unable to determine root filesystem loop device" "$1"
+      error "%s: unable to determine root filesystem loop device" "$imagefile"
       return "$EXIT_FAILURE"
   fi
 
   # set arch-specific args
   local kernel_console
-  case "$2" in
+  case "$arch" in
     i386|x86_64|ppc64)
-      qemu_args+=(-m $DEF_RAM_MB -hda "$1")
+      qemu_args+=(-m $DEF_RAM_MB -hda "$imagefile")
       # unmount the unneeded virtual drive early
       pvm_umount ;;
     arm)
@@ -164,7 +168,7 @@ pvm_guess_qemu_args() {
                   -kernel "$workdir"/vmlinuz-${Kernel}
                   -initrd "$workdir"/initramfs-${Kernel}.img
                   -append  "${kernel_console}rw root=${root_vdev}"
-                  -drive   "if=none,file=$1,format=raw,id=hd"
+                  -drive   "if=none,file=${imagefile},format=raw,id=hd"
                   -device  "virtio-blk-device,drive=hd"
                   -netdev  "user,id=mynet"
                   -device  "virtio-net-device,netdev=mynet") ;;
@@ -181,7 +185,7 @@ pvm_guess_qemu_args() {
                   -netdev  "user,id=usernet"
                   -device  "virtio-net-device,netdev=usernet") ;;
     *)
-      error "%s: unable to determine default qemu args" "$1"
+      error "%s: unable to determine default qemu args" "$imagefile"
       return "$EXIT_FAILURE" ;;
   esac
 }
@@ -210,24 +214,23 @@ main() {
 
   msg "initializing ...."
   local workdir loopdev
-  pvm_mount "$imagefile" || exit
+  pvm_mount || exit
 
   local arch
-  pvm_probe_arch "$imagefile" || exit
+  pvm_probe_arch || exit
   if [ -z "$arch" ]; then
     error "image arch is unknown: '%s'" "$arch"
     exit "$EXIT_FAILURE"
   fi
 
   local qemu_args=()
-  pvm_guess_qemu_args "$imagefile" "$arch" || exit
+  pvm_guess_qemu_args || exit
   qemu_args+=("$@")
 
-  msg "booting ...."
+  msg "booting VM ...."
   (set -x; qemu-system-"$arch" "${qemu_args[@]}")
 
   # clean up the terminal, in case SeaBIOS did something weird
-  msg "cleaning up ...."
   echo -n "[?7h[0m"
   pvm_umount
 }
