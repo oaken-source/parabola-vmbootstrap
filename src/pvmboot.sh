@@ -134,6 +134,18 @@ pvm_guess_qemu_args() {
   # if we're running a supported arch, enable kvm
   if pvm_native_arch "$2"; then qemu_args+=(-enable-kvm); fi
 
+  # find root filesystem partition (necessary for arches without bootloader)
+  local root_loopdev_n=$(echo $(parted "$1" print 2> /dev/null | grep ext4) | cut -d ' ' -f 1)
+  local root_loopdev="$loopdev"p$root_loopdev_n
+  local root_vdev=/dev/vda$root_loopdev_n
+  if [[ -b "$root_loopdev" ]]
+  then
+      msg "found root filesystem loop device: %s" "$root_loopdev"
+  else
+      error "%s: unable to determine root filesystem loop device" "$1"
+      return "$EXIT_FAILURE"
+  fi
+
   # set arch-specific args
   local kernel_console
   case "$2" in
@@ -147,7 +159,7 @@ pvm_guess_qemu_args() {
                   -m       $DEF_RAM_MB
                   -kernel "$workdir"/vmlinuz-${Kernel}
                   -initrd "$workdir"/initramfs-${Kernel}.img
-                  -append  "${kernel_console}rw root=/dev/vda3"
+                  -append  "${kernel_console}rw root=${root_vdev}"
                   -drive   "if=none,file=$1,format=raw,id=hd"
                   -device  "virtio-blk-device,drive=hd"
                   -netdev  "user,id=mynet"
@@ -158,7 +170,7 @@ pvm_guess_qemu_args() {
                   -m       $DEF_RAM_MB
                   -kernel  "$workdir"/bbl
                   -append  "${kernel_console}rw root=/dev/vda"
-                  -drive   "file=${loopdev}p3,format=raw,id=hd0"
+                  -drive   "file=${root_vdev},format=raw,id=hd0"
                   -device  "virtio-blk-device,drive=hd0"
                   -object  "rng-random,filename=/dev/urandom,id=rng0"
                   -device  "virtio-rng-device,rng=rng0"

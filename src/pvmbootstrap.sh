@@ -28,6 +28,9 @@ readonly DEF_PKGS=('base' 'parabola-base' 'openssh')
 readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_MIRROR="https://repo.parabola.nu/\$repo/os/\$arch"
 readonly DEF_IMG_GB=64
+readonly MIN_GB=1
+readonly DEF_BOOT_MB=100
+readonly DEF_SWAP_MB=0
 
 # misc
 readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
@@ -39,12 +42,16 @@ Mirror=$DEF_MIRROR
 IsNonsystemd=0
 Pkgs=()
 ImgSizeGb=$DEF_IMG_GB
+BootSizeMb=$DEF_BOOT_MB
+SwapSizeMb=$DEF_SWAP_MB
+HasSwap=0
 
 
 usage() {
   print "USAGE:"
-  print "  pvmbootstrap [-h] [-H <hook>] [-k <kernel>] [-M <mirror>]"
-  print "               [-O] [-p <package>] [-s <img_size>] <img> <arch>"
+  print "  pvmbootstrap [-h] [-H <hook>   ] [-k <kernel>  ] [-M <mirror>   ]"
+  print "               [-O] [-p <package>] [-s <img_size>] [-S <swap_size>]"
+  print "               <img> <arch>"
   echo
   prose "Produce preconfigured parabola GNU/Linux-libre virtual machine instances."
   echo
@@ -70,6 +77,7 @@ usage() {
   echo  "  -p <package>    Specify additional packages to be installed in the VM image."
   echo  "                  This option can be specified multiple times."
   echo  "  -s <img_size>   Set the size (in GB) of the VM image (minimum: $MIN_GB, default: $DEF_IMG_GB)"
+  echo  "  -S <swap_size>  Set the size (in MB) of the swap partition (default: $DEF_SWAP_MB)"
   echo
   echo  "Pre-defined hooks:"
   echo  "  ethernet-dhcp:  Configure and enable an ethernet device in the virtual"
@@ -102,70 +110,72 @@ pvm_bootstrap() {
   sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return "$EXIT_FAILURE"
 
   # partition
-  msg "partitioning blank image"
+  local boot_begin="$( [[ "$arch" =~ i686|x86_64 ]] && echo 2 || echo 1 )MiB"
+  local boot_end="$(( ${boot_begin/MiB} + $BootSizeMb ))MiB"
+  local swap_begin=${boot_end}
+  local swap_end="$(( ${swap_begin/MiB} + $SwapSizeMb ))MiB"
+  local root_begin=${swap_end}
+  local legacy_part boot_label boot_fs_type boot_flag
   case "$arch" in
     i686|x86_64)
-      sudo parted -s "$loopdev" \
-        mklabel gpt \
-        mkpart primary 1MiB 2Mib \
-        set 1 bios_grub on \
-        mkpart primary ext2 2MiB 514MiB \
-        mkpart primary linux-swap 514MiB 4610MiB \
-        mkpart primary ext4 4610MiB 100% || return "$EXIT_FAILURE" ;;
+        legacy_part='mkpart primary 1MiB 2Mib'
+        boot_label='primary'
+        boot_fs_type='ext2'
+        boot_flag='bios_grub'                   ;; # legacy_part
     armv7h)
-      sudo parted -s "$loopdev" \
-        mklabel gpt \
-        mkpart ESP fat32 1MiB 513MiB \
-        set 1 boot on \
-        mkpart primary linux-swap 513MiB 4609MiB \
-        mkpart primary ext4 4609MiB 100% || return "$EXIT_FAILURE" ;;
+        boot_label='ESP'
+        boot_fs_type='fat32'
+        boot_flag='boot'                        ;;
     ppc64le|riscv64)
-      sudo parted -s "$loopdev" \
-        mklabel gpt \
-        mkpart primary ext2 1MiB 513MiB \
-        set 1 boot on \
-        mkpart primary linux-swap 513MiB 4609MiB \
-        mkpart primary ext4 4609MiB 100% || return "$EXIT_FAILURE" ;;
+        boot_label='primary'
+        boot_fs_type='ext2'
+        boot_flag='boot'                        ;;
   esac
+  local swap_label='primary'
+  local root_label='primary'
+  local swap_part=$( (( $HasSwap )) && echo "mkpart $swap_label linux-swap $swap_begin $swap_end")
+  msg "partitioning blank image"
+  sudo parted -s "$loopdev"                                \
+    mklabel gpt                                            \
+    $legacy_part                                           \
+    mkpart $boot_label $boot_fs_type $boot_begin $boot_end \
+    set 1 $boot_flag on                                    \
+    $swap_part                                             \
+    mkpart $root_label ext4 $root_begin 100%               || return "$EXIT_FAILURE"
 
   # refresh partition data
   sudo partprobe "$loopdev"
 
   # make file systems
-  local swapdev
-  msg "creating target filesystems"
+  local boot_mkfs_cmd boot_loopdev swap_loopdev root_loopdev
   case "$arch" in
     i686|x86_64)
-      sudo mkfs.ext2 "$loopdev"p2 || return "$EXIT_FAILURE"
-      sudo mkswap "$loopdev"p3    || return "$EXIT_FAILURE"
-      sudo mkfs.ext4 "$loopdev"p4 || return "$EXIT_FAILURE"
-      swapdev="$loopdev"p3 ;;
+      boot_mkfs_cmd='mkfs.ext2'
+      boot_loopdev="$loopdev"p2
+      swap_loopdev="$loopdev"p3
+      root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 4 || echo 3 ) ;;
     armv7h)
-      sudo mkfs.vfat -F 32 "$loopdev"p1 || return "$EXIT_FAILURE"
-      sudo mkswap "$loopdev"p2          || return "$EXIT_FAILURE"
-      sudo mkfs.ext4 "$loopdev"p3       || return "$EXIT_FAILURE"
-      swapdev="$loopdev"p2 ;;
+      boot_mkfs_cmd='mkfs.vfat -F 32'
+      boot_loopdev="$loopdev"p1
+      swap_loopdev="$loopdev"p2
+      root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 3 || echo 2 ) ;;
     ppc64le|riscv64)
-      sudo mkfs.ext2 "$loopdev"p1 || return "$EXIT_FAILURE"
-      sudo mkswap "$loopdev"p2    || return "$EXIT_FAILURE"
-      sudo mkfs.ext4 "$loopdev"p3 || return "$EXIT_FAILURE"
-      swapdev="$loopdev"p2 ;;
+      boot_mkfs_cmd='mkfs.ext2'
+      boot_loopdev="$loopdev"p1
+      swap_loopdev="$loopdev"p2
+      root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 3 || echo 2 ) ;;
   esac
+  msg "creating target filesystems"
+  sudo $boot_mkfs_cmd "$boot_loopdev" || return "$EXIT_FAILURE"
+  ! (( $HasSwap ))                    || \
+  sudo mkswap         "$swap_loopdev" || return "$EXIT_FAILURE"
+  sudo mkfs.ext4      "$root_loopdev" || return "$EXIT_FAILURE"
 
   # mount partitions
   msg "mounting target partitions"
-  case "$arch" in
-    i686|x86_64)
-      sudo mount "$loopdev"p4 "$workdir"      || return "$EXIT_FAILURE"
-      sudo mkdir -p "$workdir"/boot           || return "$EXIT_FAILURE"
-      sudo mount "$loopdev"p2 "$workdir"/boot || return "$EXIT_FAILURE"
-      ;;
-    armv7h|ppc64le|riscv64)
-      sudo mount "$loopdev"p3 "$workdir"      || return "$EXIT_FAILURE"
-      sudo mkdir -p "$workdir"/boot           || return "$EXIT_FAILURE"
-      sudo mount "$loopdev"p1 "$workdir"/boot || return "$EXIT_FAILURE"
-      ;;
-  esac
+  sudo mount "$root_loopdev" "$workdir"      || return "$EXIT_FAILURE"
+  sudo mkdir -p              "$workdir"/boot || return "$EXIT_FAILURE"
+  sudo mount "$boot_loopdev" "$workdir"/boot || return "$EXIT_FAILURE"
 
   # setup qemu-user-static, if necessary
   if ! pvm_native_arch "$arch"; then
@@ -226,13 +236,12 @@ pvm_bootstrap() {
   # create an fstab
   msg "generating /etc/fstab"
   case "$arch" in
-    riscv64) ;;
-    *)
-      sudo swapoff --all
-      sudo swapon "$swapdev"
-      genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
-      sudo swapoff "$swapdev"
-      sudo swapon --all ;;
+    riscv64)                                                        ;;
+    *      ) sudo swapoff --all
+             (( $HasSwap )) && sudo swapon "$swap_loopdev"
+             genfstab -U "$workdir" | sudo tee "$workdir"/etc/fstab
+             (( $HasSwap )) && sudo swapoff "$swap_loopdev"
+             sudo swapon --all                                      ;;
   esac
 
   # configure the system envoronment
@@ -410,7 +419,7 @@ main() {
   fi
 
   # parse options
-  while getopts 'hH:k:M:Op:s:' arg; do
+  while getopts 'hH:k:M:Op:s:S:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
       H) if [ -e   "$THIS_DIR/hooks/hook-$OPTARG.sh" ]; then                  # in-tree
@@ -426,7 +435,8 @@ main() {
       M) Mirror="$OPTARG";;
       O) IsNonsystemd=0;; # TODO:
       p) Pkgs+=($OPTARG);;
-      s) ImgSizeGb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
+      s) ImgSizeGb="$( sed 's|[^0-9]||g' <<<$OPTARG)";;
+      S) SwapSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
@@ -435,8 +445,9 @@ main() {
   shift $shiftlen
   local file="$1"
   local arch="$2"
-  local has_params=$( [ "$#" -eq 2               ] && echo 1 || echo 0 )
-  local has_space=$(  [ "$ImgSizeGb" -ge $MIN_GB ] && echo 1 || echo 0 )
+  local has_params=$( (( $# == 2                                           )) && echo 1 || echo 0 )
+  local has_space=$(  (( ($ImgSizeGb*1000) >= ($MIN_GB*1000) + $SwapSizeMb )) && echo 1 || echo 0 )
+  HasSwap=$(          (( $SwapSizeMb > 0                                   )) && echo 1 || echo 0 )
   (( ! $has_params )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
   (( ! $has_space  )) && error "image size too small"   && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
 
