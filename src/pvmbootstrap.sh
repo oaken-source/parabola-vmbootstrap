@@ -23,9 +23,14 @@
 source "$(librelib messages)"
 
 
+# defaults
 readonly DEF_MIRROR="https://repo.parabola.nu/\$repo/os/\$arch"
 readonly DEF_IMG_GB=64
 
+# misc
+readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+
+# options
 Hooks=()
 Mirror=$DEF_MIRROR
 ImgSizeGb=$DEF_IMG_GB
@@ -354,9 +359,9 @@ EOF
   # boot the machine to run the pre-init hooks
   local pvmboot_cmd
   local qemu_flags=(-no-reboot)
-  if [ -f "./src/pvmboot.sh" ]; then
-    pvmboot_cmd=(bash ./src/pvmboot.sh)
-  elif type -p pvmboot &>/dev/null; then
+  if [ -f "$THIS_DIR/pvmboot.sh" ]; then # in-tree
+    pvmboot_cmd=("$THIS_DIR/pvmboot.sh")
+  elif type -p pvmboot &>/dev/null; then # installed
     pvmboot_cmd=('pvmboot')
   else
     error "pvmboot not available -- unable to run hooks"
@@ -399,10 +404,10 @@ main() {
   while getopts 'hOs:M:H:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
-      H) if [ -e "/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh" ]; then
-           hooks+=("/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh")
-         elif [ -e "./src/hooks/hook-$OPTARG.sh" ]; then
-           hooks+=("./src/hooks/hook-$OPTARG.sh")
+      H) if [ -e   "$THIS_DIR/hooks/hook-$OPTARG.sh" ]; then                  # in-tree
+           Hooks+=("$THIS_DIR/hooks/hook-$OPTARG.sh")
+         elif [ -e "/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh" ]; then # installed
+           Hooks+=("/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh")
          elif [ -e "$OPTARG" ]; then
            Hooks+=("$OPTARG")
          else
