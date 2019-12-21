@@ -25,10 +25,11 @@ readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola
 readonly DEF_RAM_MB=1000
 
 Kernel=$DEF_KERNEL
+RedirectSerial=0
 
 
 usage() {
-  print "USAGE: %s [-h] [-k <kernel>] <img> [qemu-args ...]" "${0##*/}"
+  print "USAGE: %s [-h] [-k <kernel>] [-r] <img> [qemu-args ...]" "${0##*/}"
   prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
          created using pvmbootstrap. The started instances are assigned
@@ -53,6 +54,7 @@ usage() {
   echo  "  -h           Display this help and exit"
   echo  "  -k <kernel>  Choose the kernel to boot, for images with no bootloader"
   echo  "               (default: $DEF_KERNEL)"
+  echo  "  -r           Redirect serial console to host console, even in graphics mode"
   echo
   echo  "This script is part of parabola-vmbootstrap. source code available at:"
   echo  " <https://git.parabola.nu/~oaken-source/parabola-vmbootstrap.git>"
@@ -129,7 +131,9 @@ pvm_native_arch() {
 
 pvm_guess_qemu_args() {
   # if we're not running on X / wayland, disable graphics
-  if [ -z "$DISPLAY" ]; then qemu_args+=(-nographic); fi
+  if [ -z "$DISPLAY" ]; then qemu_args+=(-nographic);
+  elif (( ${RedirectSerial} )); then qemu_args+=(-serial "mon:stdio");
+  fi
 
   # if we're running a supported arch, enable kvm
   if pvm_native_arch "$2"; then qemu_args+=(-enable-kvm); fi
@@ -189,10 +193,11 @@ main() {
   fi
 
   # parse options
-  while getopts 'hk:' arg; do
+  while getopts 'hk:r' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
       k) Kernel="$OPTARG";;
+      r) RedirectSerial=1;;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
