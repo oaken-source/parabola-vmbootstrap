@@ -24,6 +24,7 @@ source "$(librelib messages)"
 
 
 # defaults
+readonly DEF_PKGS=('base' 'parabola-base' 'openssh')
 readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_MIRROR="https://repo.parabola.nu/\$repo/os/\$arch"
 readonly DEF_IMG_GB=64
@@ -36,13 +37,14 @@ Hooks=()
 Kernels=($DEF_KERNEL)
 Mirror=$DEF_MIRROR
 IsNonsystemd=0
+Pkgs=()
 ImgSizeGb=$DEF_IMG_GB
 
 
 usage() {
   print "USAGE:"
   print "  pvmbootstrap [-h] [-H <hook>] [-k <kernel>] [-M <mirror>]"
-  print "               [-O] [-s <img_size>] <img> <arch>"
+  print "               [-O] [-p <package>] [-s <img_size>] <img> <arch>"
   echo
   prose "Produce preconfigured parabola GNU/Linux-libre virtual machine instances."
   echo
@@ -65,6 +67,8 @@ usage() {
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
   echo  "                  NOTE: This option is currently ignored; because"
   echo  "                        the 'preinit' hook is implemented as a systemd service."
+  echo  "  -p <package>    Specify additional packages to be installed in the VM image."
+  echo  "                  This option can be specified multiple times."
   echo  "  -s <img_size>   Set the size (in GB) of the VM image (minimum: $MIN_GB, default: $DEF_IMG_GB)"
   echo
   echo  "Pre-defined hooks:"
@@ -196,7 +200,7 @@ pvm_bootstrap() {
 
   # prepare lists of packages
   local kernels=(${Kernels[@]})
-  local pkgs=(base parabola-base ${Kernels[@]} openssh)
+  local pkgs=(${DEF_PKGS[@]} ${Kernels[@]} ${Pkgs[@]})
   case "$arch" in
     i686|x86_64) pkgs+=(grub) ;;
   esac
@@ -208,8 +212,9 @@ pvm_bootstrap() {
   (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd)
 
   # remove duplicate package names
-  Kernels=()
+  Kernels=() ; Pkgs=() ;
   for kernel in $(printf "%s\n" "${kernels[@]}" | sort -u) ; do Kernels+=($kernel) ; done ;
+  for pkg    in $(printf "%s\n" "${pkgs[@]}"    | sort -u) ; do Pkgs+=($pkg)       ; done ;
 
   local pkg_guest_cache=(ca-certificates-utils)
 
@@ -405,7 +410,7 @@ main() {
   fi
 
   # parse options
-  while getopts 'hH:k:M:Os:' arg; do
+  while getopts 'hH:k:M:Op:s:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
       H) if [ -e   "$THIS_DIR/hooks/hook-$OPTARG.sh" ]; then                  # in-tree
@@ -420,6 +425,7 @@ main() {
       k) Kernels+=($OPTARG);;
       M) Mirror="$OPTARG";;
       O) IsNonsystemd=0;; # TODO:
+      p) Pkgs+=($OPTARG);;
       s) ImgSizeGb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
