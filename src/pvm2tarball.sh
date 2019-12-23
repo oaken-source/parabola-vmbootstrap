@@ -39,7 +39,9 @@ usage() {
 }
 
 pvm_mount() {
-  if ! file "$imagefile" | grep -q ' DOS/MBR '; then
+  if file "$imagefile" | grep -q ' DOS/MBR '; then
+    msg "mounting filesystems"
+  else
     error "%s: does not seem to be a raw qemu image." "$imagefile"
     return "$EXIT_FAILURE"
   fi
@@ -60,7 +62,9 @@ pvm_mount() {
     sudo umount "$workdir"
   done
 
-  if [ -z "$rootpart" ]; then
+  if [ -n "$rootpart" ]; then
+    msg "found root filesystem partition: %s" "$rootpart"
+  else
     error "%s: unable to determine root partition." "$imagefile"
     return "$EXIT_FAILURE"
   fi
@@ -68,7 +72,9 @@ pvm_mount() {
   # find the boot partition
   bootpart="$(findmnt -senF "$workdir"/etc/fstab /boot | awk '{print $2}')"
 
-  if [ -z "$bootpart" ]; then
+  if [ -n "$bootpart" ]; then
+    msg "found boot filesystem partition: %s" "$bootpart"
+  else
     error "%s: unable to determine boot partition." "$imagefile"
     return "$EXIT_FAILURE"
   fi
@@ -78,6 +84,8 @@ pvm_mount() {
 }
 
 pvm_umount() {
+  msg "un-mounting filesystems"
+
   trap - INT TERM EXIT
 
   [ -n "$workdir" ] && (sudo umount -R "$workdir"; rmdir "$workdir")
@@ -98,7 +106,7 @@ main() {
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
       o) output="$OPTARG";;
-      *) usage >&2; exit "$EXIT_INVALIDARGUMENT";;
+      *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
   local shiftlen=$(( OPTIND - 1 ))
@@ -140,6 +148,7 @@ main() {
   #  archlinuxarm and the generated parabola tarball through:
   #
   # `tar -tf <tarball> | sort`
+  msg "imploding tarball"
   sudo tar -c -f "$output" -C "$workdir" -X - . << EOF
 ./boot/lost+found
 ./etc/.updated

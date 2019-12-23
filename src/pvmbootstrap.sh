@@ -65,25 +65,26 @@ usage() {
 pvm_native_arch() {
   local arch=$( [[ "$1" =~ arm.* ]] && echo 'armv7l' || echo "$1" )
 
-  setarch "$arch" /bin/true 2>/dev/null || return
+  setarch "$arch" /bin/true 2>/dev/null || return "$EXIT_FAILURE"
 }
 
 pvm_bootstrap() {
-  msg "%s: starting image creation for %s" "$file" "$arch"
+  msg "starting creation of %s image: %s" "$arch" "$file"
 
   # create the raw image file
-  qemu-img create -f raw "$file" "${ImgSizeGb}G" || return
+  qemu-img create -f raw "$file" "${ImgSizeGb}G" || return "$EXIT_FAILURE"
 
   # prepare for cleanup
   trap 'pvm_cleanup' INT TERM RETURN
 
   # mount the virtual disk
   local workdir loopdev
-  workdir="$(mktemp -d -t pvm-rootfs-XXXXXXXXXX)"  || return
-  loopdev="$(sudo losetup -fLP --show "$file")"    || return
-  sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return
+  workdir="$(mktemp -d -t pvm-rootfs-XXXXXXXXXX)"  || return "$EXIT_FAILURE"
+  loopdev="$(sudo losetup -fLP --show "$file")"    || return "$EXIT_FAILURE"
+  sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return "$EXIT_FAILURE"
 
   # partition
+  msg "partitioning blank image"
   case "$arch" in
     i686|x86_64)
       sudo parted -s "$loopdev" \
@@ -92,21 +93,21 @@ pvm_bootstrap() {
         set 1 bios_grub on \
         mkpart primary ext2 2MiB 514MiB \
         mkpart primary linux-swap 514MiB 4610MiB \
-        mkpart primary ext4 4610MiB 100% || return ;;
+        mkpart primary ext4 4610MiB 100% || return "$EXIT_FAILURE" ;;
     armv7h)
       sudo parted -s "$loopdev" \
         mklabel gpt \
         mkpart ESP fat32 1MiB 513MiB \
         set 1 boot on \
         mkpart primary linux-swap 513MiB 4609MiB \
-        mkpart primary ext4 4609MiB 100% || return ;;
+        mkpart primary ext4 4609MiB 100% || return "$EXIT_FAILURE" ;;
     ppc64le|riscv64)
       sudo parted -s "$loopdev" \
         mklabel gpt \
         mkpart primary ext2 1MiB 513MiB \
         set 1 boot on \
         mkpart primary linux-swap 513MiB 4609MiB \
-        mkpart primary ext4 4609MiB 100% || return ;;
+        mkpart primary ext4 4609MiB 100% || return "$EXIT_FAILURE" ;;
   esac
 
   # refresh partition data
@@ -114,35 +115,37 @@ pvm_bootstrap() {
 
   # make file systems
   local swapdev
+  msg "creating target filesystems"
   case "$arch" in
     i686|x86_64)
-      sudo mkfs.ext2 "$loopdev"p2 || return
-      sudo mkswap "$loopdev"p3    || return
-      sudo mkfs.ext4 "$loopdev"p4 || return
+      sudo mkfs.ext2 "$loopdev"p2 || return "$EXIT_FAILURE"
+      sudo mkswap "$loopdev"p3    || return "$EXIT_FAILURE"
+      sudo mkfs.ext4 "$loopdev"p4 || return "$EXIT_FAILURE"
       swapdev="$loopdev"p3 ;;
     armv7h)
-      sudo mkfs.vfat -F 32 "$loopdev"p1 || return
-      sudo mkswap "$loopdev"p2          || return
-      sudo mkfs.ext4 "$loopdev"p3       || return
+      sudo mkfs.vfat -F 32 "$loopdev"p1 || return "$EXIT_FAILURE"
+      sudo mkswap "$loopdev"p2          || return "$EXIT_FAILURE"
+      sudo mkfs.ext4 "$loopdev"p3       || return "$EXIT_FAILURE"
       swapdev="$loopdev"p2 ;;
     ppc64le|riscv64)
-      sudo mkfs.ext2 "$loopdev"p1 || return
-      sudo mkswap "$loopdev"p2    || return
-      sudo mkfs.ext4 "$loopdev"p3 || return
+      sudo mkfs.ext2 "$loopdev"p1 || return "$EXIT_FAILURE"
+      sudo mkswap "$loopdev"p2    || return "$EXIT_FAILURE"
+      sudo mkfs.ext4 "$loopdev"p3 || return "$EXIT_FAILURE"
       swapdev="$loopdev"p2 ;;
   esac
 
   # mount partitions
+  msg "mounting target partitions"
   case "$arch" in
     i686|x86_64)
-      sudo mount "$loopdev"p4 "$workdir"      || return
-      sudo mkdir -p "$workdir"/boot           || return
-      sudo mount "$loopdev"p2 "$workdir"/boot || return
+      sudo mount "$loopdev"p4 "$workdir"      || return "$EXIT_FAILURE"
+      sudo mkdir -p "$workdir"/boot           || return "$EXIT_FAILURE"
+      sudo mount "$loopdev"p2 "$workdir"/boot || return "$EXIT_FAILURE"
       ;;
     armv7h|ppc64le|riscv64)
-      sudo mount "$loopdev"p3 "$workdir"      || return
-      sudo mkdir -p "$workdir"/boot           || return
-      sudo mount "$loopdev"p1 "$workdir"/boot || return
+      sudo mount "$loopdev"p3 "$workdir"      || return "$EXIT_FAILURE"
+      sudo mkdir -p "$workdir"/boot           || return "$EXIT_FAILURE"
+      sudo mount "$loopdev"p1 "$workdir"/boot || return "$EXIT_FAILURE"
       ;;
   esac
 
@@ -158,18 +161,20 @@ pvm_bootstrap() {
     local qemu_user_static=$(sudo grep -l -F -e "interpreter /usr/bin/qemu-$qemu_arch-"   \
                                              -r -- /proc/sys/fs/binfmt_misc 2>/dev/null | \
                                   xargs -r sudo grep -xF 'enabled'                        )
-    if [[ -z "$qemu_user_static" ]]; then
-      error "%s: missing qemu-user-static for %s" "$file" "$arch"
+    if [[ -n "$qemu_user_static" ]]; then
+      msg "found qemu-user-static for %s" "$arch"
+    else
+      error "missing qemu-user-static for %s" "$arch"
       return "$EXIT_FAILURE"
     fi
 
     sudo mkdir -p "$workdir"/usr/bin
-    sudo cp -v "/usr/bin/qemu-$qemu_arch-"* "$workdir"/usr/bin || return
+    sudo cp -v "/usr/bin/qemu-$qemu_arch-"* "$workdir"/usr/bin || return "$EXIT_FAILURE"
   fi
 
   # prepare pacstrap config
   local pacconf repos
-  pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return
+  pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return "$EXIT_FAILURE"
   repos=('libre' 'core' 'extra' 'community' 'pcr')
   echo -e "[options]\nArchitecture = $arch\n\n" > "$pacconf"
   for repo in ${repos[@]}; do echo -e "[$repo]\nServer = $Mirror\n" >> "$pacconf"; done;
@@ -203,10 +208,12 @@ pvm_bootstrap() {
   local pkg_guest_cache=(ca-certificates-utils)
 
   # pacstrap! :)
-  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"            || return
-  sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkg_guest_cache[@]}" || return
+  msg "installing packages into the work chroot"
+  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"            || return "$EXIT_FAILURE"
+  sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkg_guest_cache[@]}" || return "$EXIT_FAILURE"
 
   # create an fstab
+  msg "generating /etc/fstab"
   case "$arch" in
     riscv64) ;;
     *)
@@ -217,14 +224,16 @@ pvm_bootstrap() {
       sudo swapon --all ;;
   esac
 
-  # produce a hostname
-  echo "parabola" | sudo tee "$workdir"/etc/hostname
-
-  # produce an /etc/locale.conf
-  echo "LANG=en_US.UTF-8" | sudo tee "$workdir"/etc/locale.conf
-  sudo sed -i 's/#en_US.UTF-8/en_US.UTF-8/' "$workdir"/etc/locale.gen
+  # configure the system envoronment
+  local hostname='parabola'
+  local lang='en_US.UTF-8'
+  msg "configuring system envoronment"
+  echo "/etc/hostname: "    ; echo $hostname    | sudo tee "$workdir"/etc/hostname    ;
+  echo "/etc/locale.conf: " ; echo "LANG=$lang" | sudo tee "$workdir"/etc/locale.conf ;
+  sudo sed -i "s/#${lang}/${lang}/" "$workdir"/etc/locale.gen
 
   # install a boot loader
+  msg "installing boot loader"
   case "$arch" in
     i686|x86_64)
       local grub_def_file="$workdir"/etc/default/grub
@@ -232,48 +241,57 @@ pvm_bootstrap() {
       # enable serial console
       local field=GRUB_CMDLINE_LINUX_DEFAULT
       local value="console=tty0 console=ttyS0"
-      sudo sed -i "s/.*$field=.*/$field=\"$value\"/" "$grub_def_file" || return
+      sudo sed -i "s/.*$field=.*/$field=\"$value\"/" "$grub_def_file" || return "$EXIT_FAILURE"
       # disable boot menu timeout
       local field=GRUB_TIMEOUT
       local value=0
-      sudo sed -i "s/.*$field=.*/$field=$value/" "$grub_def_file"     || return
+      sudo sed -i "s/.*$field=.*/$field=$value/" "$grub_def_file"     || return "$EXIT_FAILURE"
       # install grub to the VM
-      sudo arch-chroot "$workdir" grub-install "$loopdev"             || return
-      sudo arch-chroot "$workdir" grub-mkconfig -o $grub_cfg_file     || return
+      sudo arch-chroot "$workdir" grub-install "$loopdev"             || return "$EXIT_FAILURE"
+      sudo arch-chroot "$workdir" grub-mkconfig -o $grub_cfg_file     || return "$EXIT_FAILURE"
+      ;;
+    armv7h)
+      echo "(armv7h has no boot loader)"
       ;;
     riscv64)
       # FIXME: for the time being, use fedora bbl to boot
+      warning "(riscv64 requires a blob - downloading it now)"
       local bbl_url=https://fedorapeople.org/groups/risc-v/disk-images/bbl
-      sudo wget $bbl_url -O "$workdir"/boot/bbl || return
+      sudo wget $bbl_url -O "$workdir"/boot/bbl || return "$EXIT_FAILURE"
       ;;
-    # armv7h has no boot loader.
-    # FIXME: what about ppc64le
+    ppc64le)
+      # FIXME: what about ppc64le?
+      echo "(ppc64le has no boot loader)"
+      ;;
   esac
 
   # regenerate the initcpio, skipping the autodetect hook
-  local preset_file="$workdir"/etc/mkinitcpio.d/linux-libre.preset
-  sudo cp "$preset_file"{,.backup}                                      || return
-  echo "default_options=\"-S autodetect\"" | sudo tee -a "$preset_file" || return
-  sudo arch-chroot "$workdir" mkinitcpio -p linux-libre                 || return
-  sudo mv "$preset_file"{.backup,}                                      || return
-
-  # disable audit
-  sudo arch-chroot "$workdir" systemctl mask systemd-journald-audit.socket
+  local kernel='linux-libre'
+  local preset_file="$workdir"/etc/mkinitcpio.d/${kernel}.preset
+  local default_options="default_options=\"-S autodetect\""
+  msg "regenerating initcpio for kernel: '${kernel}'"
+  sudo cp "$preset_file"{,.backup}                                 || return "$EXIT_FAILURE"
+  echo "$default_options" | sudo tee -a "$preset_file" > /dev/null || return "$EXIT_FAILURE"
+  sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}              || return "$EXIT_FAILURE"
+  sudo mv "$preset_file"{.backup,}                                 || return "$EXIT_FAILURE"
 
   # initialize the pacman keyring
+  msg "initializing the pacman keyring"
   sudo arch-chroot "$workdir" pacman-key --init
   sudo arch-chroot "$workdir" pacman-key --populate archlinux archlinux32 archlinuxarm parabola
 
-  # enable the entropy daemon, to avoid stalling https
-  sudo arch-chroot "$workdir" systemctl enable haveged.service
-
   # push hooks into the image
+  msg "preparing hooks"
   sudo mkdir -p "$workdir/root/hooks"
   [ "${#Hooks[@]}" -eq 0 ] || sudo cp -v "${Hooks[@]}" "$workdir"/root/hooks/
 
   # create a master hook script
-  sudo tee "$workdir"/root/hooks.sh << 'EOF'
+  local hooks_success_msg="[hooks.sh] pre-init hooks successful"
+  echo "hooks.sh:"
+  sudo tee "$workdir"/root/hooks.sh << EOF
 #!/bin/bash
+echo "[hooks.sh] boot successful - configuring ...."
+
 systemctl disable preinit.service
 
 # generate the locale
@@ -287,8 +305,8 @@ pacman -U --noconfirm /var/cache/pacman/pkg/ca-certificates-utils-*.pkg.tar.xz
 
 # run the hooks
 for hook in /root/hooks/*; do
-  echo "running hook \"$hook\""
-  source "$hook" || return
+  echo "[hooks.sh] running hook: '\$(basename \$hook)'"
+  source "\$hook" || return
 done
 
 # clean up after yourself
@@ -299,10 +317,11 @@ rm -f /var/cache/pacman/pkg/*
 rm -f /root/.bash_history
 
 # report success :)
-echo "preinit hooks successful"
+echo "$hooks_success_msg"
 EOF
 
-  # create a preinit service to run the hooks
+  # create a pre-init service to run the hooks
+  echo "preinit.service:"
   sudo tee "$workdir"/usr/lib/systemd/system/preinit.service << 'EOF'
 [Unit]
 Description=Oneshot VM Preinit
@@ -313,19 +332,26 @@ StandardOutput=journal+console
 StandardError=journal+console
 ExecStart=/usr/bin/bash /root/hooks.sh
 Type=oneshot
+ExecStopPost=echo "powering off"
 ExecStopPost=shutdown -r now
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-  # enable the preinit service
-  sudo arch-chroot "$workdir" systemctl enable preinit.service || return
+  # configure services
+  msg "configuring services"
+  # disable audit
+  sudo arch-chroot "$workdir" systemctl mask systemd-journald-audit.socket
+  # enable the entropy daemon, to avoid stalling https
+  sudo arch-chroot "$workdir" systemctl enable haveged.service
+  # enable the pre-init service
+  sudo arch-chroot "$workdir" systemctl enable preinit.service || return "$EXIT_FAILURE"
 
   # unmount everything
   pvm_cleanup
 
-  # boot the machine to run the preinit hooks
+  # boot the machine to run the pre-init hooks
   local pvmboot_cmd
   local qemu_flags=(-no-reboot)
   if [ -f "./src/pvmboot.sh" ]; then
@@ -333,13 +359,13 @@ EOF
   elif type -p pvmboot &>/dev/null; then
     pvmboot_cmd=('pvmboot')
   else
-    error "%s: pvmboot not available -- unable to run hooks" "$file"
+    error "pvmboot not available -- unable to run hooks"
     return "$EXIT_FAILURE"
   fi
   pvmboot_cmd+=("$file" "${qemu_flags[@]}")
   exec 3>&1
   msg "booting the machine to run the pre-init hooks"
-  DISPLAY='' "${pvmboot_cmd[@]}" | tee /dev/fd/3 | grep -q "preinit hooks successful"
+  DISPLAY='' "${pvmboot_cmd[@]}" | tee /dev/fd/3 | grep -q -F "$hooks_success_msg"
   local res=$?
   exec 3>&-
   ! (( $res )) || error "%s: failed to complete preinit hooks" "$file"
@@ -350,6 +376,7 @@ EOF
 pvm_cleanup() {
   trap - INT TERM RETURN
 
+  msg "cleaning up"
   [ -n "$pacconf" ] && rm -f "$pacconf"
   unset pacconf
   if [ -n "$workdir" ]; then
@@ -384,7 +411,7 @@ main() {
       M) Mirror="$OPTARG";;
       O) Init="-openrc";;
       s) ImgSizeGb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
-      *) usage >&2; exit "$EXIT_INVALIDARGUMENT";;
+      *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
 
@@ -392,16 +419,18 @@ main() {
   shift $shiftlen
   local file="$1"
   local arch="$2"
-  [ "$#" -ne 2               ] && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
-  [ "$ImgSizeGb" -lt $MIN_GB ] && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
+  local has_params=$( [ "$#" -eq 2               ] && echo 1 || echo 0 )
+  local has_space=$(  [ "$ImgSizeGb" -ge $MIN_GB ] && echo 1 || echo 0 )
+  (( ! $has_params )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
+  (( ! $has_space  )) && error "image size too small"   && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
 
   # determine if the target arch is supported
   case "$arch" in
     i686|x86_64|armv7h) ;;
     ppc64le|riscv64)
-      warning "%s: arch %s is experimental" "$file" "$arch";;
+      warning "arch %s is experimental" "$arch";;
     *)
-      error "%s: arch %s is unsupported" "$file" "$arch"
+      error "arch %s is unsupported" "$arch"
       exit "$EXIT_INVALIDARGUMENT";;
   esac
 
@@ -418,11 +447,11 @@ main() {
 
   # create the virtual machine
   if ! pvm_bootstrap; then
-    error "%s: bootstrap failed" "$file"
+    error "bootstrap failed for image: %s" "$file"
     exit "$EXIT_FAILURE"
   fi
 
-  msg "%s: bootstrap complete" "$file"
+  msg "bootstrap complete for image: %s" "$file"
 }
 
 main "$@"

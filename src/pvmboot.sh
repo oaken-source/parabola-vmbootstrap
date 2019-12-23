@@ -28,23 +28,23 @@ usage() {
   print "USAGE: %s [-h] <img> [qemu-args ...]" "${0##*/}"
   prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
-         created using pvmbootstrap. The started instance is assigned
+         created using pvmbootstrap. The started instances are assigned
          ${DEF_RAM_MB}MB of RAM and one SMP core."
   echo
   prose "When a graphical desktop environment is available, start the machine
          normally, otherwise append -nographic to the qemu options. This behavior
          can be forced by unsetting DISPLAY manually, for example through:"
   echo
-  echo  "  DISPLAY= ${0##*/} ./an.img"
+  echo  "  DISPLAY= ${0##*/} IMG ..."
   echo
-  prose "When the architecture of <img> is compatible with the host architecture,
+  prose "When the architecture of IMG is compatible with the host architecture,
          append -enable-kvm to the qemu arguments."
   echo
-  prose "Further arguments provided after <img> will be passed unmodified to the
+  prose "Further arguments provided after IMG will be passed unmodified to the
          qemu invocation. This can be used to allocate more resources to the virtual
          machine, for example:"
   echo
-  echo  "  ${0##*/} ./an.img -m 2G -smp 2"
+  echo  "  ${0##*/} IMG -m 2G -smp 2"
   echo
   echo  "Supported options:"
   echo  "  -h   Display this help and exit"
@@ -59,15 +59,17 @@ pvm_mount() {
     return "$EXIT_FAILURE"
   fi
 
+  msg "mounting filesystems"
   trap 'pvm_umount' INT TERM EXIT
 
-  workdir="$(mktemp -d -t pvm-XXXXXXXXXX)" || return
-  loopdev="$(sudo losetup -fLP --show "$1")" || return
+  workdir="$(mktemp -d -t pvm-XXXXXXXXXX)"   || return "$EXIT_FAILURE"
+  loopdev="$(sudo losetup -fLP --show "$1")" || return "$EXIT_FAILURE"
   sudo mount "$loopdev"p1 "$workdir" \
-    || sudo mount "$loopdev"p2 "$workdir" || return
+    || sudo mount "$loopdev"p2 "$workdir"    || return "$EXIT_FAILURE"
 }
 
 pvm_umount() {
+  msg "un-mounting filesystems"
   trap - INT TERM EXIT
 
   [ -n "$workdir" ] && (sudo umount "$workdir"; rmdir "$workdir")
@@ -81,30 +83,30 @@ pvm_probe_arch() {
   kernel=$(find "$workdir" -maxdepth 1 -type f -iname '*vmlinu*' | head -n1)
   if [ -z "$kernel" ]; then
     warning "%s: unable to find kernel binary" "$1"
-    return
+    return "$EXIT_FAILURE"
   fi
 
   # attempt to get kernel arch from elf header
   arch="$(readelf -h "$kernel" 2>/dev/null | grep Machine | awk '{print $2}')"
   case "$arch" in
-    PowerPC64) arch=ppc64; return;;
-    RISC-V) arch=riscv64; return;;
-    *) arch="";;
+    PowerPC64) arch=ppc64;   return "$EXIT_SUCCESS";;
+    RISC-V   ) arch=riscv64; return "$EXIT_SUCCESS";;
+    *        ) arch="";;
   esac
 
   # attempt to get kernel arch from objdump
   arch="$(objdump -f "$kernel" 2>/dev/null | grep architecture: | awk '{print $2}' | tr -d ',')"
   case "$arch" in
-    i386) arch=i386; return;;
-    i386:*) arch=x86_64; return;;
-    *) arch="";;
+    i386  ) arch=i386;   return "$EXIT_SUCCESS";;
+    i386:*) arch=x86_64; return "$EXIT_SUCCESS";;
+    *     ) arch="";;
   esac
 
   # attempt to get kernel arch from file magic
   arch="$(file "$kernel")"
   case "$arch" in
-    *"ARM boot executable"*) arch=arm; return;;
-    *) arch="";;
+    *"ARM boot executable"*) arch=arm; return "$EXIT_SUCCESS";;
+    *                      ) arch="";;
   esac
 
   # no more ideas; giving up.
@@ -173,23 +175,24 @@ main() {
   while getopts 'h' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
-      *) usage >&2; exit "$EXIT_INVALIDARGUMENT";;
+      *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
   local shiftlen=$(( OPTIND - 1 ))
   shift $shiftlen
   local imagefile="$1"
   shift
-  [ ! -e "$imagefile" ] && error "%s: file not found" "$imagefile" && exit "$EXIT_FAILURE"
+  [ ! -n "$imagefile" ] && error "no image file specified"                 && exit "$EXIT_FAILURE"
+  [ ! -e "$imagefile" ] && error "image file not found: '%s'" "$imagefile" && exit "$EXIT_FAILURE"
 
+  msg "initializing ...."
   local workdir loopdev
   pvm_mount "$imagefile" || exit
 
   local arch
   pvm_probe_arch "$imagefile" || exit
-
   if [ -z "$arch" ]; then
-    error "%s: arch is unknown" "$imagefile"
+    error "image arch is unknown: '%s'" "$arch"
     exit "$EXIT_FAILURE"
   fi
 
@@ -197,9 +200,11 @@ main() {
   pvm_guess_qemu_args "$imagefile" "$arch" || exit
   qemu_args+=("$@")
 
+  msg "booting ...."
   (set -x; qemu-system-"$arch" "${qemu_args[@]}")
 
   # clean up the terminal, in case SeaBIOS did something weird
+  msg "cleaning up ...."
   echo -n "[?7h[0m"
   pvm_umount
 }
