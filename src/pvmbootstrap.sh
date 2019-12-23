@@ -52,7 +52,7 @@ usage() {
   echo  "  -M <mirror>     Specify a different mirror from which to fetch packages"
   echo  "                  (default: $DEF_MIRROR)"
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
-  echo  "  -s <img_size>   Set the size (in GB) of the VM image (default: $DEF_IMG_GB)"
+  echo  "  -s <img_size>   Set the size (in GB) of the VM image (minimum: $MIN_GB, default: $DEF_IMG_GB)"
   echo
   echo  "Pre-defined hooks:"
   echo  "  ethernet-dhcp:  Configure and enable an ethernet device in the virtual"
@@ -390,9 +390,10 @@ main() {
 
   local shiftlen=$(( OPTIND - 1 ))
   shift $shiftlen
-  if [ "$#" -ne 2 ]; then usage >&2; exit "$EXIT_INVALIDARGUMENT"; fi
   local file="$1"
   local arch="$2"
+  [ "$#" -ne 2               ] && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
+  [ "$ImgSizeGb" -lt $MIN_GB ] && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
 
   # determine if the target arch is supported
   case "$arch" in

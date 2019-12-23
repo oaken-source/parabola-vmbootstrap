@@ -21,13 +21,15 @@
 # shellcheck source=/usr/lib/libretools/messages.sh
 source "$(librelib messages)"
 
+readonly DEF_RAM_MB=1000
+
 
 usage() {
   print "USAGE: %s [-h] <img> [qemu-args ...]" "${0##*/}"
   prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
-         created using pvmbootstrap. The started instance is assigned 1G of
-         RAM and one SMP core."
+         created using pvmbootstrap. The started instance is assigned
+         ${DEF_RAM_MB}MB of RAM and one SMP core."
   echo
   prose "When a graphical desktop environment is available, start the machine
          normally, otherwise append -nographic to the qemu options. This behavior
@@ -129,13 +131,13 @@ pvm_guess_qemu_args() {
   local kernel_console
   case "$2" in
     i386|x86_64|ppc64)
-      qemu_args+=(-m 1G -hda "$1")
+      qemu_args+=(-m $DEF_RAM_MB -hda "$1")
       # unmount the unneeded virtual drive early
       pvm_umount ;;
     arm)
       kernel_console="console=tty0 console=ttyAMA0 "
       qemu_args+=(-machine virt
-                  -m       1G
+                  -m       $DEF_RAM_MB
                   -kernel  "$workdir"/vmlinuz-linux-libre
                   -initrd  "$workdir"/initramfs-linux-libre.img
                   -append  "${kernel_console}rw root=/dev/vda3"
@@ -146,7 +148,7 @@ pvm_guess_qemu_args() {
     riscv64)
       kernel_console=$( [ -z "$DISPLAY" ] && echo "console=ttyS0 " )
       qemu_args+=(-machine virt
-                  -m       1G
+                  -m       $DEF_RAM_MB
                   -kernel  "$workdir"/bbl
                   -append  "${kernel_console}rw root=/dev/vda"
                   -drive   "file=${loopdev}p3,format=raw,id=hd0"
