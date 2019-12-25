@@ -25,11 +25,16 @@ source "$(librelib messages)"
 
 
 # defaults
-readonly DEF_PKGS=('base' 'parabola-base' 'openssh')
+readonly PKG_SET_MIN='minimal'
+readonly PKG_SET_STD='standard'
+readonly PKG_SET_DEV='devel'                            ; readonly DEF_PKG_SET=$PKG_SET_STD ;
+readonly MIN_PKGS=('base'                             ) ; readonly ROOT_MB_MIN=800          ;
+readonly STD_PKGS=('base' 'parabola-base'             ) ; readonly ROOT_MB_STD=1000         ;
+readonly DEV_PKGS=('base' 'parabola-base' 'base-devel') ; readonly ROOT_MB_DEV=1250         ;
+readonly DEF_PKGS=(${STD_PKGS[@]}                     ) ; readonly DEF_MIN_MB=$ROOT_MB_STD  ;
 readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_MIRROR=https://repo.parabola.nu
-readonly DEF_IMG_GB=64
-readonly MIN_GB=1
+readonly DEF_ROOT_MB=64000
 readonly DEF_BOOT_MB=100
 readonly DEF_SWAP_MB=0
 
@@ -38,12 +43,15 @@ readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 readonly GUEST_CACHED_PKGS=('ca-certificates-utils')
 
 # options
+BasePkgSet=$PKG_SET_STD
+MinRootMb=$DEF_MIN_MB
 Hooks=()
-Kernels=($DEF_KERNEL)
+Kernels=()
 Mirror=$DEF_MIRROR
 IsNonsystemd=0
-Pkgs=()
-ImgSizeGb=$DEF_IMG_GB
+Pkgs=(${DEF_PKGS[@]})
+OptPkgs=()
+RootSizeMb=$DEF_ROOT_MB
 BootSizeMb=$DEF_BOOT_MB
 SwapSizeMb=$DEF_SWAP_MB
 HasSwap=0
@@ -51,8 +59,8 @@ HasSwap=0
 
 usage() {
   print "USAGE:"
-  print "  pvmbootstrap [-h] [-H <hook>   ] [-k <kernel>  ] [-M <mirror>   ]"
-  print "               [-O] [-p <package>] [-s <img_size>] [-S <swap_size>]"
+  print "  pvmbootstrap [-b <base-set>] [-h] [-H <hook>] [-k <kernel>] [-M <mirror>]"
+  print "               [-O] [-p <package>] [-s <root_size>] [-S <swap_size>]"
   print "               <img> <arch>"
   echo
   prose "Produce preconfigured parabola GNU/Linux-libre virtual machine instances."
@@ -63,6 +71,8 @@ usage() {
          or one of the experimental arches: 'ppc64le' or 'riscv64'."
   echo
   echo  "Supported options:"
+  echo  "  -b <base-set>   Select one of the pre-defined package-sets described below"
+  echo  "                  (default: 'standard')"
   echo  "  -h              Display this help and exit"
   echo  "  -H <hook>       Enable a hook to customize the created image. This can be"
   echo  "                  the path to a script, which will be executed once within"
@@ -70,7 +80,8 @@ usage() {
   echo  "                  below. This option can be specified multiple times."
   echo  "  -k <kernel>     Specify an additional kernel package (default: $DEF_KERNEL)."
   echo  "                  This option can be specified multiple times; but note that"
-  echo  "                  '$DEF_KERNEL' will be installed, regardless of this option."
+  echo  "                  '$DEF_KERNEL' will be installed as part of the '$PKG_SET_STD' and"
+  echo  "                  '$PKG_SET_DEV' package sets, regardless of this option."
   echo  "  -M <mirror>     Specify a different mirror from which to fetch packages"
   echo  "                  (default: $DEF_MIRROR)"
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
@@ -78,8 +89,17 @@ usage() {
   echo  "                        the 'preinit' hook is implemented as a systemd service."
   echo  "  -p <package>    Specify additional packages to be installed in the VM image."
   echo  "                  This option can be specified multiple times."
-  echo  "  -s <img_size>   Set the size (in GB) of the VM image (minimum: $MIN_GB, default: $DEF_IMG_GB)"
+  echo  "                  Note that these will be ignored if -s <root_size> is 0."
+  echo  "  -s <root_size>  Set the size (in MB) of the root partition (default: $DEF_ROOT_MB)."
+  echo  "                  If this is 0 (or less than the <base-set> requires),"
+  echo  "                  the VM image will be the smallest size possible,"
+  echo  "                  fit to the <base-set>; and any -p <package> will be ignored."
   echo  "  -S <swap_size>  Set the size (in MB) of the swap partition (default: $DEF_SWAP_MB)"
+  echo
+  echo  "Pre-defined package-sets:"
+  print "  $PKG_SET_MIN:%$((15 - ${#PKG_SET_MIN}))s${MIN_PKGS[*]}" ""
+  print "  $PKG_SET_STD:%$((15 - ${#PKG_SET_STD}))s${STD_PKGS[*]}" ""
+  print "  $PKG_SET_DEV:%$((15 - ${#PKG_SET_DEV}))s${DEV_PKGS[*]}" ""
   echo
   echo  "Pre-defined hooks:"
   echo  "  ethernet-dhcp:  Configure and enable an ethernet device in the virtual"
@@ -100,7 +120,8 @@ pvm_bootstrap() {
   msg "starting creation of %s image: %s" "$arch" "$imagefile"
 
   # create the raw image file
-  qemu-img create -f raw "$imagefile" "${ImgSizeGb}G" || return "$EXIT_FAILURE"
+  local img_mb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
+  qemu-img create -f raw "$imagefile" "${img_mb}M" || return "$EXIT_FAILURE"
 
   # prepare for cleanup
   trap 'pvm_cleanup' INT TERM RETURN
@@ -213,9 +234,9 @@ pvm_bootstrap() {
   done
 
   # prepare package lists
-  local kernels=(     ${Kernels[@]}                           )
-  local pkgs=(        ${DEF_PKGS[@]} ${Kernels[@]} ${Pkgs[@]} )
-  local pkgs_cached=( ${GUEST_CACHED_PKGS[@]}                 )
+  local kernels=(     ${Kernels[@]}                          )
+  local pkgs=(        ${Pkgs[@]} ${Kernels[@]} ${OptPkgs[@]} )
+  local pkgs_cached=( ${GUEST_CACHED_PKGS[@]}                )
   case "$arch" in
     i686|x86_64) pkgs+=(grub)              ;;
     riscv64    )                           ;;
@@ -341,7 +362,8 @@ rm -f /var/cache/pacman/pkg/*
 rm -f /root/.bash_history
 
 # report success :)
-echo "$hooks_success_msg"
+echo "$hooks_success_msg - powering off"
+[[ -e "/usr/lib/libretools/common.sh" ]] && rm -f /usr/lib/libretools/common.sh
 EOF
 
   # create a pre-init service to run the hooks
@@ -356,7 +378,6 @@ StandardOutput=journal+console
 StandardError=journal+console
 ExecStart=/usr/bin/bash /root/hooks.sh
 Type=oneshot
-ExecStopPost=echo "powering off"
 ExecStopPost=shutdown -r now
 
 [Install]
@@ -400,17 +421,18 @@ EOF
 pvm_cleanup() {
   trap - INT TERM RETURN
 
-  msg "cleaning up"
-  [ -n "$pacconf" ] && rm -f "$pacconf"
-  unset pacconf
+  [ -n "${workdir}${loopdev}${pacconf}" ] && msg "cleaning up"
+
   if [ -n "$workdir" ]; then
-    sudo rm -f "$workdir"/usr/bin/qemu-*
+    sudo rm -f "$workdir"/usr/bin/qemu-*C
     sudo umount -R "$workdir" 2> /dev/null
     rmdir "$workdir"
   fi
+  if [ -n "$loopdev" ]; then sudo losetup -d "$loopdev"; fi;
+  if [ -n "$pacconf" ]; then rm -f "$pacconf"; fi;
   unset workdir
-  [ -n "$loopdev" ] && sudo losetup -d "$loopdev"
   unset loopdev
+  unset pacconf
 }
 
 main() {
@@ -420,8 +442,16 @@ main() {
   fi
 
   # parse options
-  while getopts 'hH:k:M:Op:s:S:' arg; do
+  while getopts 'b:hH:k:M:Op:s:S:' arg; do
     case "$arg" in
+      b) case $OPTARG in $PKG_SET_MIN) BasePkgSet=$OPTARG                             ;
+                                       Pkgs=(${MIN_PKGS[@]}) ; MinRootMb=$ROOT_MB_MIN ;;
+                         $PKG_SET_STD) BasePkgSet=$OPTARG    ; Kernels+=($DEF_KERNEL) ;
+                                       Pkgs=(${STD_PKGS[@]}) ; MinRootMb=$ROOT_MB_STD ;;
+                         $PKG_SET_DEV) BasePkgSet=$OPTARG    ; Kernels+=($DEF_KERNEL) ;
+                                       Pkgs=(${DEV_PKGS[@]}) ; MinRootMb=$ROOT_MB_DEV ;;
+                         *           ) warning "%s: invalid base set" "$OPTARG"       ;;
+         esac ;;
       h) usage; return "$EXIT_SUCCESS";;
       H) if [ -e   "$THIS_DIR/hooks/hook-$OPTARG.sh" ]; then                  # in-tree
            Hooks+=("$THIS_DIR/hooks/hook-$OPTARG.sh")
@@ -435,8 +465,8 @@ main() {
       k) Kernels+=($OPTARG);;
       M) Mirror="$OPTARG";;
       O) IsNonsystemd=0;; # TODO:
-      p) Pkgs+=($OPTARG);;
-      s) ImgSizeGb="$( sed 's|[^0-9]||g' <<<$OPTARG)";;
+      p) OptPkgs+=($OPTARG);;
+      s) RootSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
       S) SwapSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
@@ -446,11 +476,13 @@ main() {
   shift $shiftlen
   local imagefile="$1"
   local arch="$2"
-  local has_params=$( (( $# == 2                                           )) && echo 1 || echo 0 )
-  local has_space=$(  (( ($ImgSizeGb*1000) >= ($MIN_GB*1000) + $SwapSizeMb )) && echo 1 || echo 0 )
-  HasSwap=$(          (( $SwapSizeMb > 0                                   )) && echo 1 || echo 0 )
-  (( ! $has_params )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
-  (( ! $has_space  )) && error "image size too small"   && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
+  (( $# != 2 )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
+
+  (( $RootSizeMb > 0          )) && \
+  (( $RootSizeMb < $MinRootMb )) && warning "specified root FS size too small - ignoring OptPkgs"
+  (( $RootSizeMb < $MinRootMb )) && RootSizeMb=$MinRootMb && OptPkgs=()
+  RootSizeMb=$(( $RootSizeMb + (${#Kernels[@]} * 75) ))
+  HasSwap=$( (( $SwapSizeMb > 0 )) && echo 1 || echo 0 )
 
   # determine if the target arch is supported
   case "$arch" in
