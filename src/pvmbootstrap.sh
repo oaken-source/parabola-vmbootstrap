@@ -27,7 +27,7 @@ source "$(librelib messages)"
 # defaults
 readonly DEF_PKGS=('base' 'parabola-base' 'openssh')
 readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
-readonly DEF_MIRROR="https://repo.parabola.nu/\$repo/os/\$arch"
+readonly DEF_MIRROR=https://repo.parabola.nu
 readonly DEF_IMG_GB=64
 readonly MIN_GB=1
 readonly DEF_BOOT_MB=100
@@ -207,8 +207,10 @@ pvm_bootstrap() {
   pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return "$EXIT_FAILURE"
   repos=(libre core extra community pcr)
   (( $IsNonsystemd )) && repos=('nonsystemd' ${repos[@]})
-  echo -e "[options]\nArchitecture = $arch\n\n" > "$pacconf"
-  for repo in ${repos[@]}; do echo -e "[$repo]\nServer = $Mirror\n" >> "$pacconf"; done;
+  echo -e "[options]\nArchitecture = $arch" > "$pacconf"
+  for repo in ${repos[@]};    do echo "[$repo]"                           >> "$pacconf";
+      for mirror_n in {1..5}; do echo "Server = $Mirror/\$repo/os/\$arch" >> "$pacconf"; done;
+  done
 
   # prepare package lists
   local kernels=(     ${Kernels[@]}                           )
