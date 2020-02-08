@@ -20,10 +20,6 @@
 ###############################################################################
 
 
-# shellcheck source=/usr/lib/libretools/messages.sh
-source "$(librelib messages)"
-
-
 # defaults
 readonly PKG_SET_MIN='minimal'
 readonly PKG_SET_STD='standard'
@@ -34,16 +30,22 @@ readonly DEV_PKGS=('base' 'parabola-base' 'base-devel') ; readonly ROOT_MB_DEV=1
 readonly DEF_PKGS=(${STD_PKGS[@]}                     ) ; readonly DEF_MIN_MB=$ROOT_MB_STD  ;
 readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_MIRROR=https://repo.parabola.nu
-readonly DEF_ROOT_MB=64000
+readonly DEF_ROOT_MB=32000
 readonly DEF_BOOT_MB=100
 readonly DEF_SWAP_MB=0
+readonly MANDATORY_PKGS_ALL=(                            )
+readonly MANDATORY_PKGS_armv7h=(  haveged net-tools      )
+readonly MANDATORY_PKGS_i686=(    haveged net-tools grub )
+readonly MANDATORY_PKGS_ppc64le=( haveged net-tools      )
+readonly MANDATORY_PKGS_riscv64=(                        )
+readonly MANDATORY_PKGS_x86_64=(  haveged net-tools grub )
 
 # misc
-readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 readonly GUEST_CACHED_PKGS=('ca-certificates-utils')
+readonly PVM_HOOKS_SUCCESS_MSG="[hooks.sh] pre-init hooks successful"
 
 # options
-BasePkgSet=$PKG_SET_STD
+BasePkgSet=$DEF_PKG_SET
 MinRootMb=$DEF_MIN_MB
 Hooks=()
 Kernels=()
@@ -57,7 +59,8 @@ SwapSizeMb=$DEF_SWAP_MB
 HasSwap=0
 
 
-usage() {
+usage()
+{
   print "USAGE:"
   print "  pvmbootstrap [-b <base-set>] [-h] [-H <hook>] [-k <kernel>] [-M <mirror>]"
   print "               [-O] [-p <package>] [-s <root_size>] [-S <swap_size>]"
@@ -110,27 +113,26 @@ usage() {
   echo  "  <https://git.parabola.nu/parabola-vmbootstrap.git>"
 }
 
-pvm_native_arch() {
-  local arch=$( [[ "$1" =~ arm.* ]] && echo 'armv7l' || echo "$1" )
+pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM RETURN
+{
+  # prompt to clobber if the target output file already exists
+  pvm_check_no_mounts                  || return "$EXIT_FAILURE"
+  mkdir -p "$(dirname "$imagefile")"   || return "$EXIT_FAILURE"
+  pvm_prompt_clobber_file "$imagefile" || return "$EXIT_FAILURE"
 
-  setarch "$arch" /bin/true 2>/dev/null || return "$EXIT_FAILURE"
-}
-
-pvm_bootstrap() {
-  msg "starting creation of %s image: %s" "$arch" "$imagefile"
+  msg "starting build for %s image: %s" "$arch" "$imagefile"
 
   # create the raw image file
   local img_mb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
   qemu-img create -f raw "$imagefile" "${img_mb}M" || return "$EXIT_FAILURE"
 
   # prepare for cleanup
-  trap 'pvm_cleanup' INT TERM RETURN
+  trap 'pvm_bootstrap_cleanup' INT TERM RETURN
 
   # mount the virtual disk
-  local workdir loopdev
-  workdir="$(mktemp -d -t pvm-rootfs-XXXXXXXXXX)"    || return "$EXIT_FAILURE"
-  loopdev="$(sudo losetup -fLP --show "$imagefile")" || return "$EXIT_FAILURE"
-  sudo dd if=/dev/zero of="$loopdev" bs=1M count=8   || return "$EXIT_FAILURE"
+  local bootdir workdir loopdev
+  pvm_setup_loopdev                                || return "$EXIT_FAILURE" # sets: $bootdir $workdir $loopdev
+  sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return "$EXIT_FAILURE"
 
   # partition
   local boot_begin="$( [[ "$arch" =~ i686|x86_64 ]] && echo 2 || echo 1 )MiB"
@@ -202,20 +204,19 @@ pvm_bootstrap() {
 
   # setup qemu-user-static, if necessary
   if ! pvm_native_arch "$arch"; then
-    # target arch can't execute natively, pacstrap is going to need help by qemu
     local qemu_arch
     case "$arch" in
       armv7h) qemu_arch=arm     ;;
       *     ) qemu_arch="$arch" ;;
     esac
 
-    local qemu_user_static=$(sudo grep -l -F -e "interpreter /usr/bin/qemu-$qemu_arch-"   \
-                                             -r -- /proc/sys/fs/binfmt_misc 2>/dev/null | \
-                                  xargs -r sudo grep -xF 'enabled'                        )
-    if [[ -n "$qemu_user_static" ]]; then
-      msg "found qemu-user-static for %s" "$arch"
+    local qemu_static=$(sudo grep -l -F -e "interpreter /usr/bin/qemu-$qemu_arch-"   \
+                                  -r -- /proc/sys/fs/binfmt_misc 2>/dev/null       | \
+                        xargs -r sudo grep -xF 'enabled'                             )
+    if [[ -n "$qemu_static" ]]; then
+      msg "found qemu-user-static for arch: '%s'" "$qemu_arch"
     else
-      error "missing qemu-user-static for %s" "$arch"
+      error "missing qemu-user-static for arch: '%s'" "$qemu_arch"
       return "$EXIT_FAILURE"
     fi
 
@@ -224,9 +225,8 @@ pvm_bootstrap() {
   fi
 
   # prepare pacstrap config
-  local pacconf repos
-  pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return "$EXIT_FAILURE"
-  repos=(libre core extra community pcr)
+  local pacconf="$(mktemp -t pvm-pacconf-XXXXXXXXXX)" || return "$EXIT_FAILURE"
+  local repos=(libre core extra community pcr)
   (( $IsNonsystemd )) && repos=('nonsystemd' ${repos[@]})
   echo -e "[options]\nArchitecture = $arch" > "$pacconf"
   for repo in ${repos[@]};    do echo "[$repo]"                           >> "$pacconf";
@@ -234,15 +234,17 @@ pvm_bootstrap() {
   done
 
   # prepare package lists
-  local kernels=(     ${Kernels[@]}                          )
-  local pkgs=(        ${Pkgs[@]} ${Kernels[@]} ${OptPkgs[@]} )
-  local pkgs_cached=( ${GUEST_CACHED_PKGS[@]}                )
+  local kernels=(     ${Kernels[@]}                                                   )
+  local pkgs=(        ${Pkgs[@]} ${Kernels[@]} ${OptPkgs[@]} ${MANDATORY_PKGS_ALL[@]} )
+  local pkgs_cached=( ${GUEST_CACHED_PKGS[@]}                                         )
   case "$arch" in
-    i686|x86_64) pkgs+=(grub)              ;;
-    riscv64    )                           ;;
-    *          ) pkgs+=(haveged net-tools) ;;
+    armv7h ) pkgs+=( ${MANDATORY_PKGS_armv7h[@]}  ) ;;
+    i686   ) pkgs+=( ${MANDATORY_PKGS_i686[@]}    ) ;;
+    ppc64le) pkgs+=( ${MANDATORY_PKGS_ppc64le[@]} ) ;;
+    riscv64) pkgs+=( ${MANDATORY_PKGS_riscv64[@]} ) ;;
+    x86_64 ) pkgs+=( ${MANDATORY_PKGS_x86_64[@]}  ) ;;
   esac
-  ((   $IsNonsystemd )) &&                                              && pkgs+=(libelogind)
+  ((   $IsNonsystemd )) && [[ "$BasePkgSet" == "$PKG_SET_MIN"        ]] && pkgs+=(libelogind)
   (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd)
 
   # minimize package lists
@@ -254,6 +256,9 @@ pvm_bootstrap() {
   msg "installing packages into the work chroot"
   sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"        || return "$EXIT_FAILURE"
   sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkgs_cached[@]}" || return "$EXIT_FAILURE"
+  msg2 "creating a list of installed packages"
+  pacman -Sl -r "$workdir/" --config "$pacconf"   | \
+  awk '/\[installed\]$/ {print $1 "/" $2 "-" $3}' > $(dirname $imagefile)/pkglist.txt
 
   # create an fstab
   msg "generating /etc/fstab"
@@ -270,13 +275,16 @@ pvm_bootstrap() {
   local hostname='parabola'
   local lang='en_US.UTF-8'
   msg "configuring system envoronment"
-  echo "/etc/hostname: "    ; echo $hostname    | sudo tee "$workdir"/etc/hostname    ;
-  echo "/etc/locale.conf: " ; echo "LANG=$lang" | sudo tee "$workdir"/etc/locale.conf ;
+  echo -n "/etc/hostname: "    ; echo $hostname    | sudo tee "$workdir"/etc/hostname    ;
+  echo -n "/etc/locale.conf: " ; echo "LANG=$lang" | sudo tee "$workdir"/etc/locale.conf ;
   sudo sed -i "s/#${lang}/${lang}/" "$workdir"/etc/locale.gen
 
   # install a boot loader
   msg "installing boot loader"
   case "$arch" in
+    armv7h)
+      msg2 "(armv7h has no boot loader)"
+      ;;
     i686|x86_64)
       local grub_def_file="$workdir"/etc/default/grub
       local grub_cfg_file=/boot/grub/grub.cfg
@@ -292,26 +300,26 @@ pvm_bootstrap() {
       sudo arch-chroot "$workdir" grub-install "$loopdev"             || return "$EXIT_FAILURE"
       sudo arch-chroot "$workdir" grub-mkconfig -o $grub_cfg_file     || return "$EXIT_FAILURE"
       ;;
-    armv7h)
-      echo "(armv7h has no boot loader)"
+    ppc64le)
+      msg2 "(ppc64le has no boot loader)"
       ;;
     riscv64)
-      # FIXME: for the time being, use fedora bbl to boot
-      warning "(riscv64 requires a blob - downloading it now)"
-      local bbl_url=https://fedorapeople.org/groups/risc-v/disk-images/bbl
-      sudo wget $bbl_url -O "$workdir"/boot/bbl || return "$EXIT_FAILURE"
-      ;;
-    ppc64le)
-      # FIXME: what about ppc64le?
-      echo "(ppc64le has no boot loader)"
+      # FIXME: for the time being, use berkeley bootloader to boot
+      if [[ -f /usr/lib/parabola-vmbootstrap/bbl ]]; then
+        cp /usr/lib/parabola-vmbootstrap/bbl "$workdir"/boot/
+      else
+        error "riscv64 requires the berkeley bootloader from the 'parabola-vmbootstrap' package"
+        return "$EXIT_FAILURE"
+      fi
       ;;
   esac
 
-  # regenerate the initcpio(s), skipping the autodetect hook
+  # regenerate the initcpio(s), to skip the 'autodetect' hook
   for kernel in ${Kernels[@]}
   do
     local preset_file="$workdir"/etc/mkinitcpio.d/${kernel}.preset
     local default_options="default_options=\"-S autodetect\""
+
     msg "regenerating initcpio for kernel: '${kernel}'"
     sudo cp "$preset_file"{,.backup}                                 || return "$EXIT_FAILURE"
     echo "$default_options" | sudo tee -a "$preset_file" > /dev/null || return "$EXIT_FAILURE"
@@ -326,18 +334,15 @@ pvm_bootstrap() {
 
   # push hooks into the image
   msg "preparing hooks"
-  sudo mkdir -p "$workdir/root/hooks"
+  sudo mkdir -p "$workdir"/root/hooks
   [ "${#Hooks[@]}" -eq 0 ] || sudo cp -v "${Hooks[@]}" "$workdir"/root/hooks/
   (( $IsNonsystemd )) && sudo rm "$workdir"/root/hooks/hook-ethernet-dhcp.sh # systemd-only hook
 
   # create a master hook script
-  local hooks_success_msg="[hooks.sh] pre-init hooks successful"
-  echo "hooks.sh:"
+  msg2 "hooks.sh:"
   sudo tee "$workdir"/root/hooks.sh << EOF
 #!/bin/bash
 echo "[hooks.sh] boot successful - configuring ...."
-
-systemctl disable preinit.service
 
 # generate the locale
 locale-gen
@@ -355,19 +360,20 @@ for hook in /root/hooks/*; do
 done
 
 # clean up after yourself
+systemctl disable preinit.service
+rm -f  /root/.bash_history
 rm -rf /root/hooks
-rm -f /root/hooks.sh
-rm -f /usr/lib/systemd/system/preinit.service
-rm -f /var/cache/pacman/pkg/*
-rm -f /root/.bash_history
+rm -f  /root/hooks.sh
+rm -f  /usr/lib/systemd/system/preinit.service
+rm -f  /var/cache/pacman/pkg/*
 
 # report success :)
-echo "$hooks_success_msg - powering off"
+echo "$PVM_HOOKS_SUCCESS_MSG - powering off"
 [[ -e "/usr/lib/libretools/common.sh" ]] && rm -f /usr/lib/libretools/common.sh
 EOF
 
   # create a pre-init service to run the hooks
-  echo "preinit.service:"
+  msg2 "preinit.service:"
   sudo tee "$workdir"/usr/lib/systemd/system/preinit.service << 'EOF'
 [Unit]
 Description=Oneshot VM Preinit
@@ -394,23 +400,18 @@ EOF
   sudo arch-chroot "$workdir" systemctl enable preinit.service || return "$EXIT_FAILURE"
 
   # unmount everything
-  pvm_cleanup
+  pvm_bootstrap_cleanup
+}
+
+pvm_bootstrap_preinit() # assumes: $imagefile
+{
+  pvm_check_no_mounts || return "$EXIT_FAILURE"
 
   # boot the machine to run the pre-init hooks
-  local pvmboot_cmd
-  local qemu_flags=(-no-reboot)
-  if [ -f "$THIS_DIR/pvmboot.sh" ]; then # in-tree
-    pvmboot_cmd=("$THIS_DIR/pvmboot.sh")
-  elif type -p pvmboot &>/dev/null; then # installed
-    pvmboot_cmd=('pvmboot')
-  else
-    error "pvmboot not available -- unable to run hooks"
-    return "$EXIT_FAILURE"
-  fi
-  pvmboot_cmd+=("$imagefile" "${qemu_flags[@]}")
+  [[ "$(pvm_get_pvmboot_cmd)" ]] && msg "booting the VM to run the pre-init hooks" || \
+                                    warning "unable to run pre-init hooks"
   exec 3>&1
-  msg "booting the machine to run the pre-init hooks"
-  DISPLAY='' "${pvmboot_cmd[@]}" | tee /dev/fd/3 | grep -q -F "$hooks_success_msg"
+  pvm_boot "$imagefile" | tee /dev/fd/3 | grep -q -F "$PVM_HOOKS_SUCCESS_MSG"
   local res=$?
   exec 3>&-
   ! (( $res )) || error "%s: failed to complete preinit hooks" "$imagefile"
@@ -418,28 +419,22 @@ EOF
   return $res
 }
 
-pvm_cleanup() {
+pvm_bootstrap_cleanup() # sets: $pacconf , untraps: INT TERM RETURN
+{
   trap - INT TERM RETURN
 
-  [ -n "${workdir}${loopdev}${pacconf}" ] && msg "cleaning up"
+  [[ "${workdir}${pacconf}" ]] && msg "cleaning up"
 
-  if [ -n "$workdir" ]; then
-    sudo rm -f "$workdir"/usr/bin/qemu-*C
-    sudo umount -R "$workdir" 2> /dev/null
-    rmdir "$workdir"
-  fi
-  if [ -n "$loopdev" ]; then sudo losetup -d "$loopdev"; fi;
-  if [ -n "$pacconf" ]; then rm -f "$pacconf"; fi;
-  unset workdir
-  unset loopdev
+  [[ -n "$workdir" ]] && sudo rm -f "$workdir"/usr/bin/qemu-*C
+  [[ -n "$pacconf" ]] && rm -f "$pacconf"
+  pvm_cleanup || return "$EXIT_FAILURE"
+
   unset pacconf
 }
 
-main() {
-  if [ "$(id -u)" -eq 0 ]; then
-    error "This program must be run as a regular user"
-    exit "$EXIT_NOPERMISSION"
-  fi
+main() # ( [cli_options] imagefile arch )
+{
+  pvm_check_unprivileged # exits on failure
 
   # parse options
   while getopts 'b:hH:k:M:Op:s:S:' arg; do
@@ -450,28 +445,19 @@ main() {
                                        Pkgs=(${STD_PKGS[@]}) ; MinRootMb=$ROOT_MB_STD ;;
                          $PKG_SET_DEV) BasePkgSet=$OPTARG    ; Kernels+=($DEF_KERNEL) ;
                                        Pkgs=(${DEV_PKGS[@]}) ; MinRootMb=$ROOT_MB_DEV ;;
-                         *           ) warning "%s: invalid base set" "$OPTARG"       ;;
-         esac ;;
-      h) usage; return "$EXIT_SUCCESS";;
-      H) if [ -e   "$THIS_DIR/hooks/hook-$OPTARG.sh" ]; then                  # in-tree
-           Hooks+=("$THIS_DIR/hooks/hook-$OPTARG.sh")
-         elif [ -e "/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh" ]; then # installed
-           Hooks+=("/usr/lib/libretools/pvmbootstrap/hook-$OPTARG.sh")
-         elif [ -e "$OPTARG" ]; then
-           Hooks+=("$OPTARG")
-         else
-           warning "%s: hook does not exist" "$OPTARG"
-         fi ;;
-      k) Kernels+=($OPTARG);;
-      M) Mirror="$OPTARG";;
-      O) IsNonsystemd=0;; # TODO:
-      p) OptPkgs+=($OPTARG);;
-      s) RootSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
-      S) SwapSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)";;
-      *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
+                         *           ) warning "invalid base set: %s" "$OPTARG"       ;;
+         esac                                                                           ;;
+      h) usage; return "$EXIT_SUCCESS"                                                  ;;
+      H) Hooks+=( "$(pvm_get_hook $OPTARG)" )                                           ;;
+      k) Kernels+=($OPTARG)                                                             ;;
+      M) Mirror="$OPTARG"                                                               ;;
+      O) IsNonsystemd=0                                                                 ;; # TODO:
+      p) OptPkgs+=($OPTARG)                                                             ;;
+      s) RootSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)"                                   ;;
+      S) SwapSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)"                                   ;;
+      *) error "invalid option: '%s'" "$arg" ; usage >&2 ; exit "$EXIT_INVALIDARGUMENT" ;;
     esac
   done
-
   local shiftlen=$(( OPTIND - 1 ))
   shift $shiftlen
   local imagefile="$1"
@@ -484,32 +470,34 @@ main() {
   RootSizeMb=$(( $RootSizeMb + (${#Kernels[@]} * 75) ))
   HasSwap=$( (( $SwapSizeMb > 0 )) && echo 1 || echo 0 )
 
+  msg "making $arch image: $imagefile"
+
   # determine if the target arch is supported
   case "$arch" in
-    i686|x86_64|armv7h)                                           ;;
-    ppc64le|riscv64   ) warning "arch %s is experimental" "$arch" ;;
-    *                 ) error "arch %s is unsupported" "$arch"
-                        exit "$EXIT_INVALIDARGUMENT"              ;;
+    i686|x86_64|armv7h)                                            ;;
+    ppc64le|riscv64   ) warning "arch is experimental: %s" "$arch" ;;
+    *                 ) error   "arch is unsupported: %s"  "$arch"
+                        exit "$EXIT_INVALIDARGUMENT"               ;;
   esac
 
-  # determine whether the target output file already exists
-  if [ -e "$imagefile" ]; then
-    warning "%s: file exists. Continue? [y/N]" "$imagefile"
-    read -p " " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+  # create the virtual machine
+  if pvm_bootstrap; then
+    if pvm_bootstrap_preinit; then
+      msg "bootstrap complete for image: %s" "$imagefile"
+      exit "$EXIT_SUCCESS"
+    else
+      error "bootstrap complete, but preinit failed for image: %s" "$imagefile"
       exit "$EXIT_FAILURE"
     fi
-    rm -f "$imagefile" || exit
-  fi
-
-  # create the virtual machine
-  if ! pvm_bootstrap; then
+  else
     error "bootstrap failed for image: %s" "$imagefile"
     exit "$EXIT_FAILURE"
   fi
-
-  msg "bootstrap complete for image: %s" "$imagefile"
 }
 
-main "$@"
+
+if   source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null || \
+     source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null
+then main "$@"
+else echo "can not find pvm-common.sh.inc" && exit 1
+fi

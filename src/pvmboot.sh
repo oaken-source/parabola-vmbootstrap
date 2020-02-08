@@ -19,8 +19,6 @@
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.   #
 ###############################################################################
 
-# shellcheck source=/usr/lib/libretools/messages.sh
-source "$(librelib messages)"
 
 readonly DEF_KERNEL='linux-libre' # ASSERT: must be 'linux-libre', per 'parabola-base'
 readonly DEF_RAM_MB=1000
@@ -29,14 +27,16 @@ Kernel=$DEF_KERNEL
 RedirectSerial=0
 
 
-usage() {
+usage()
+{
   print "USAGE:"
   print "  pvmboot [-h] [-k <kernel>] [-r] <img> [qemu-args ...]"
   echo
   prose "Determine the architecture of <img> and boot it using qemu. <img> is assumed
          to be a valid, raw-formatted parabola virtual machine image, ideally
-         created using pvmbootstrap. The started instances are assigned
-         ${DEF_RAM_MB}MB of RAM and one SMP core."
+         created using pvmbootstrap. If the image was not created using pvmbootstrap,
+         the boot partition must be vfat or ext2, and the root partition must be ext4
+         The machine instance is assigned ${DEF_RAM_MB}MB of RAM and one SMP core."
   echo
   prose "When a graphical desktop environment is available, start the machine
          normally, otherwise append -nographic to the qemu options. This behavior
@@ -63,176 +63,120 @@ usage() {
   echo  "  <https://git.parabola.nu/parabola-vmbootstrap.git>"
 }
 
-pvm_mount() {
-  if ! file "$imagefile" | grep -q ' DOS/MBR '; then
-    error "%s: does not seem to be a raw qemu image." "$imagefile"
-    return "$EXIT_FAILURE"
-  fi
 
-  msg "mounting filesystems"
-  trap 'pvm_umount' INT TERM EXIT
-
-  workdir="$(mktemp -d -t pvm-XXXXXXXXXX)"           || return "$EXIT_FAILURE"
-  loopdev="$(sudo losetup -fLP --show "$imagefile")" || return "$EXIT_FAILURE"
-  sudo mount "$loopdev"p1 "$workdir"                 || \
-  sudo mount "$loopdev"p2 "$workdir"                 || return "$EXIT_FAILURE"
-}
-
-pvm_umount() {
-  trap - INT TERM EXIT
-
-  [ -n "$workdir" ] && (sudo umount "$workdir"; rmdir "$workdir")
-  [ -n "$loopdev" ] && sudo losetup -d "$loopdev"
-  unset workdir
-  unset loopdev
-}
-
-pvm_probe_arch() {
-  local kernel
-
-  kernel=$(find "$workdir" -maxdepth 1 -type f -iname '*vmlinu*' | head -n1)
-  if [ -z "$kernel" ]; then
-    warning "%s: unable to find kernel binary" "$imagefile"
-    return "$EXIT_FAILURE"
-  fi
-
-  # attempt to get kernel arch from elf header
-  arch="$(readelf -h "$kernel" 2>/dev/null | grep Machine | awk '{print $2}')"
+pvm_guess_qemu_cmd() # assumes: $arch , sets: $qemu_cmd
+{
   case "$arch" in
-    PowerPC64) arch=ppc64   ; return "$EXIT_SUCCESS" ;;
-    RISC-V   ) arch=riscv64 ; return "$EXIT_SUCCESS" ;;
-    *        ) arch=""                               ;;
+    armv7h ) qemu_cmd="qemu-system-arm"                                         ;;
+    i686   ) qemu_cmd="qemu-system-i386"                                        ;;
+    ppc64le) qemu_cmd="qemu-system-ppc64"                                       ;;
+    riscv64) qemu_cmd="qemu-system-riscv64"                                     ;;
+    x86_64 ) qemu_cmd="qemu-system-x86_64"                                      ;;
+    *      ) error "unknown image arch: '%s'" "$arch" ; return "$EXIT_FAILURE"  ;;
   esac
-
-  # attempt to get kernel arch from objdump
-  arch="$(objdump -f "$kernel" 2>/dev/null | grep architecture: | awk '{print $2}' | tr -d ',')"
-  case "$arch" in
-    i386  ) arch=i386   ; return "$EXIT_SUCCESS" ;;
-    i386:*) arch=x86_64 ; return "$EXIT_SUCCESS" ;;
-    *     ) arch=""                              ;;
-  esac
-
-  # attempt to get kernel arch from file magic
-  arch="$(file "$kernel")"
-  case "$arch" in
-    *"ARM boot executable"*) arch=arm ; return "$EXIT_SUCCESS" ;;
-    *                      ) arch=""                           ;;
-  esac
-
-  # no more ideas; giving up.
 }
 
-pvm_native_arch() {
-  local arch
+pvm_guess_qemu_args() # assumes: $qemu_args $imagefile $arch $bootdir , appends: $qemu_args
+{
+  msg "configuring the virtual machine ($arch)"
 
-  case "$1" in
-    arm*) arch=armv7l ;;
-    *   ) arch="$1"   ;;
-  esac
+  qemu_args+=(-m $DEF_RAM_MB )
 
-  setarch "$arch" /bin/true 2>/dev/null || return
-}
+  # optional large qemu disk
+  qemu_args+=( $( [[ -w $DATA_IMG ]] && echo "-hdb $DATA_IMG" ) )
 
-pvm_guess_qemu_args() {
   # if we're not running on X / wayland, disable graphics
   if [ -z "$DISPLAY" ]; then qemu_args+=(-nographic);
   elif (( ${RedirectSerial} )); then qemu_args+=(-serial "mon:stdio");
   fi
 
+  # find root filesystem partition
+  local root_part_n
+  pvm_find_root_part_n "$imagefile" || return "$EXIT_FAILURE" # sets: $root_part_n
+
   # if we're running a supported arch, enable kvm
   if pvm_native_arch "$arch"; then qemu_args+=(-enable-kvm); fi
 
-  # find root filesystem partition (necessary for arches without bootloader)
-  local root_loopdev_n=$(echo $(parted "$imagefile" print 2> /dev/null | grep ext4) | cut -d ' ' -f 1)
-  local root_loopdev="$loopdev"p$root_loopdev_n
-  local root_vdev=/dev/vda$root_loopdev_n
-  if [[ -b "$root_loopdev" ]]
-  then
-      msg "found root filesystem loop device: %s" "$root_loopdev"
-  else
-      error "%s: unable to determine root filesystem loop device" "$imagefile"
-      return "$EXIT_FAILURE"
-  fi
-
   # set arch-specific args
-  local kernel_console
+  local kernel_tty
   case "$arch" in
-    i386|x86_64|ppc64)
-      qemu_args+=(-m $DEF_RAM_MB -hda "$imagefile")
-      # unmount the unneeded virtual drive early
-      pvm_umount ;;
-    arm)
-      kernel_console="console=tty0 console=ttyAMA0 "
-      qemu_args+=(-machine virt
-                  -m       $DEF_RAM_MB
-                  -kernel "$workdir"/vmlinuz-${Kernel}
-                  -initrd "$workdir"/initramfs-${Kernel}.img
-                  -append  "${kernel_console}rw root=${root_vdev}"
-                  -drive   "if=none,file=${imagefile},format=raw,id=hd"
-                  -device  "virtio-blk-device,drive=hd"
-                  -netdev  "user,id=mynet"
-                  -device  "virtio-net-device,netdev=mynet") ;;
-    riscv64)
-      kernel_console=$( [ -z "$DISPLAY" ] && echo "console=ttyS0 " )
-      qemu_args+=(-machine virt
-                  -m       $DEF_RAM_MB
-                  -kernel  "$workdir"/bbl
-                  -append  "${kernel_console}rw root=/dev/vda"
-                  -drive   "file=${root_vdev},format=raw,id=hd0"
-                  -device  "virtio-blk-device,drive=hd0"
-                  -object  "rng-random,filename=/dev/urandom,id=rng0"
-                  -device  "virtio-rng-device,rng=rng0"
-                  -netdev  "user,id=usernet"
-                  -device  "virtio-net-device,netdev=usernet") ;;
-    *)
-      error "%s: unable to determine default qemu args" "$imagefile"
-      return "$EXIT_FAILURE" ;;
+    armv7h ) kernel_tty="console=tty0 console=ttyAMA0 "                   ;;
+    i686   ) kernel_tty=$( [[ -z "$DISPLAY" ]] && echo "console=ttyS0 " ) ;;
+    ppc64le)                                                              ;; # TODO:
+    riscv64)                                                              ;; # TODO:
+    x86_64 ) kernel_tty=$( [[ -z "$DISPLAY" ]] && echo "console=ttyS0 " ) ;;
+  esac
+  case "$arch" in
+    armv7h ) qemu_args+=(-machine virt
+                         -kernel  "$bootdir"/vmlinuz-${Kernel}
+                         -initrd  "$bootdir"/initramfs-${Kernel}.img
+                         -append  "${kernel_tty}rw root=/dev/vda$root_part_n"
+                         -drive   "if=none,file=${imagefile},format=raw,id=hd"
+                         -device  "virtio-blk-device,drive=hd"
+                         -netdev  "user,id=mynet"
+                         -device  "virtio-net-device,netdev=mynet")            ;;
+    i686   ) qemu_args+=(-hda     "$imagefile")                                ;;
+    ppc64le) qemu_args+=(-hda "   $imagefile")                                 ;;
+    riscv64) qemu_args+=(-machine virt
+                         -kernel  "$bootdir"/bbl
+                         -append  "${kernel_tty}rw root=/dev/vda"
+                         -drive   "file=/dev/vda$root_part_n,format=raw,id=hd0"
+                         -device  "virtio-blk-device,drive=hd0"
+                         -object  "rng-random,filename=/dev/urandom,id=rng0"
+                         -device  "virtio-rng-device,rng=rng0"
+                         -netdev  "user,id=usernet"
+                         -device  "virtio-net-device,netdev=usernet")          ;;
+    x86_64 ) qemu_args+=(-hda     "$imagefile")                                ;;
   esac
 }
 
-main() {
-  if [ "$(id -u)" -eq 0 ]; then
-    error "This program must be run as a regular user"
-    exit "$EXIT_NOPERMISSION"
-  fi
+main() # ( [cli_options] imagefile qemu_args )
+{
+  pvm_check_unprivileged # exits on failure
 
   # parse options
   while getopts 'hk:r' arg; do
     case "$arg" in
-      h) usage; return "$EXIT_SUCCESS";;
-      k) Kernel="$OPTARG";;
-      r) RedirectSerial=1;;
-      *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
+      h) usage; return "$EXIT_SUCCESS"                                                  ;;
+      k) Kernel="$OPTARG"                                                               ;;
+      r) RedirectSerial=1                                                               ;;
+      *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT" ;;
     esac
   done
-  local shiftlen=$(( OPTIND - 1 ))
-  shift $shiftlen
-  local imagefile="$1"
-  shift
-  [ ! -n "$imagefile" ] && error "no image file specified"                 && exit "$EXIT_FAILURE"
-  [ ! -e "$imagefile" ] && error "image file not found: '%s'" "$imagefile" && exit "$EXIT_FAILURE"
+  local shiftlen=$(( OPTIND - 1 )) ; shift $shiftlen ;
+  local imagefile="$1"             ; shift           ;
+  local cli_args=$@
+  [ ! -n "$imagefile" ] && error "no image file specified"                  && exit "$EXIT_FAILURE"
+  [ ! -e "$imagefile" ] && error "image file not found: '%s'"  "$imagefile" && exit "$EXIT_FAILURE"
+  [ ! -w "$imagefile" ] && error "image file not writable: %s" "$imagefile" && exit "$EXIT_FAILURE"
 
   msg "initializing ...."
-  local workdir loopdev
-  pvm_mount || exit
-
+  local bootdir workdir loopdev
   local arch
-  pvm_probe_arch || exit
-  if [ -z "$arch" ]; then
-    error "image arch is unknown: '%s'" "$arch"
-    exit "$EXIT_FAILURE"
-  fi
-
+  local qemu_cmd
   local qemu_args=()
-  pvm_guess_qemu_args || exit
-  qemu_args+=("$@")
+  local was_error
+  pvm_mount           || exit "$EXIT_FAILURE" # assumes: $imagefile , sets: $loopdev $bootdir $workdir
+  pvm_probe_arch      || exit "$EXIT_FAILURE" # assumes: $bootdir $workdir $imagefile , sets: $arch
+  pvm_guess_qemu_cmd  || exit "$EXIT_FAILURE" # assumes: $arch , sets: $qemu_cmd
+  pvm_guess_qemu_args || exit "$EXIT_FAILURE" # assumes: $qemu_args $imagefile $arch $bootdir , appends: $qemu_args
 
-  msg "booting VM ...."
-  (set -x; qemu-system-"$arch" "${qemu_args[@]}")
+  # unmount the virtual disks early, for images with a bootloader
+  [[ "$arch" =~ ^i686$|^x86_64$|^ppc64le$ ]] && pvm_cleanup
+
+  msg "booting the virtual machine ...."
+  (set -x; $qemu_cmd "${qemu_args[@]}" $cli_args) ; was_error=$? ;
 
   # clean up the terminal, in case SeaBIOS did something weird
   echo -n "[?7h[0m"
-  pvm_umount
+  pvm_cleanup
+
+  (( ! $was_error )) && exit "$EXIT_SUCCESS" || exit "$EXIT_FAILURE"
 }
 
-main "$@"
+
+if   source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null || \
+     source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null
+then main "$@"
+else echo "can not find pvm-common.sh.inc" && exit 1
+fi

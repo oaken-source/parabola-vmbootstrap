@@ -19,10 +19,9 @@
 #     along with this program.  If not, see <http://www.gnu.org/licenses/>.   #
 ###############################################################################
 
-# shellcheck source=/usr/lib/libretools/messages.sh
-source "$(librelib messages)"
 
-usage() {
+usage()
+{
   print "USAGE:"
   print "  pvm2tarball [-h] [-o <FILENAME>] <IMG>"
   echo
@@ -41,78 +40,16 @@ usage() {
   echo  "  <https://git.parabola.nu/parabola-vmbootstrap.git>"
 }
 
-pvm_mount() {
-  if file "$imagefile" | grep -q ' DOS/MBR '; then
-    msg "mounting filesystems"
-  else
-    error "%s: does not seem to be a raw qemu image." "$imagefile"
-    return "$EXIT_FAILURE"
-  fi
-
-  trap 'pvm_umount' INT TERM EXIT
-
-  workdir="$(mktemp -d -t pvm-XXXXXXXXXX)"           || return
-  loopdev="$(sudo losetup -fLP --show "$imagefile")" || return
-
-  # find the root partition
-  local part rootpart bootpart
-  for part in "$loopdev"p*; do
-    sudo mount "$part" "$workdir" || continue
-    if [ -f "$workdir"/etc/fstab ]; then
-      rootpart="$part"
-      break
-    fi
-    sudo umount "$workdir"
-  done
-
-  if [ -n "$rootpart" ]; then
-    msg "found root filesystem partition: %s" "$rootpart"
-  else
-    error "%s: unable to determine root partition." "$imagefile"
-    return "$EXIT_FAILURE"
-  fi
-
-  # find the boot partition
-  if (( $(find /boot/ -name initramfs-* | wc -l) > 0 )) && \
-     (( $(find /boot/ -name vmlinuz-*   | wc -l) > 0 )); then
-    msg "found /boot on root filesystem partition"
-  else
-    bootpart="$(findmnt -senF "$workdir"/etc/fstab /boot | awk '{print $2}')"
-
-    if [ -n "$bootpart" ]; then
-      # mount and be happy
-      msg "found boot filesystem partition: %s" "$bootpart"
-      sudo mount "$bootpart" "$workdir"/boot || return "$EXIT_FAILURE"
-    else
-      error "%s: unable to determine boot filesystem partition." "$imagefile"
-      return "$EXIT_FAILURE"
-    fi
-  fi
-}
-
-pvm_umount() {
-  msg "un-mounting filesystems"
-
-  trap - INT TERM EXIT
-
-  [ -n "$workdir" ] && (sudo umount -R "$workdir"; rmdir "$workdir")
-  unset workdir
-  [ -n "$loopdev" ] && sudo losetup -d "$loopdev"
-  unset loopdev
-}
-
-main() {
-  if [ "$(id -u)" -eq 0 ]; then
-    error "This program must be run as a regular user"
-    exit "$EXIT_NOPERMISSION"
-  fi
+main()
+{
+  pvm_check_unprivileged # exits on failure
 
   # parse options
-  local output
+  local outfile
   while getopts 'ho:' arg; do
     case "$arg" in
       h) usage; return "$EXIT_SUCCESS";;
-      o) output="$OPTARG";;
+      o) outfile="$OPTARG";;
       *) error "invalid argument: %s\n" "$arg"; usage >&2; exit "$EXIT_INVALIDARGUMENT";;
     esac
   done
@@ -124,29 +61,16 @@ main() {
   image_filename="$(basename "$imagefile")"
   shift
 
-  # check for input file presence
-  if [ ! -e "$imagefile" ]; then
-    error "%s: file not found" "$imagefile"
-    exit "$EXIT_FAILURE"
-  fi
-
   # determine output file
-  [ -n "$output" ] || output="${image_filename%.img*}.tar.gz"
+  [ -n "$outfile" ] || outfile="$(dirname $imagefile)/${image_filename%.img*}.tar.gz"
 
-  # check for output file presence
-  if [ -e "$output" ]; then
-    warning "%s: file exists. Continue? [y/N]" "$output"
-    read -p " " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-      exit "$EXIT_FAILURE"
-    fi
-    rm -f "$output" || exit
-  fi
+  # ensure that the image file exists, prompt to clobber existing output file
+  pvm_check_file_exists_and_writable "$imagefile" || exit "$EXIT_FAILURE"
+  pvm_prompt_clobber_file            "$outfile"   || exit "$EXIT_FAILURE"
 
   # mount the root filesystem
-  local workdir loopdev
-  pvm_mount || exit
+  local bootdir workdir loopdev
+  pvm_mount || exit "$EXIT_FAILURE" # assumes: $imagefile , sets: $loopdev $bootdir $workdir
 
   # tar the root filesystem, excluding unneeded things
   # HACKING:
@@ -156,7 +80,7 @@ main() {
   #
   # `tar -tf <tarball> | sort`
   msg "imploding tarball"
-  sudo tar -c -f "$output" -C "$workdir" -X - . << EOF
+  sudo tar -c -f "$outfile" -C "$workdir" -X - . << EOF
 ./boot/lost+found
 ./etc/.updated
 ./etc/pacman.d/gnupg
@@ -169,10 +93,15 @@ main() {
 EOF
 
   # give the archive back to the user
-  sudo chown "$(id -u)":"$(id -g)" "$output"
+  sudo chown "$(id -u)":"$(id -g)" "$outfile"
 
   # cleanup
-  pvm_umount
+  pvm_cleanup
 }
 
-main "$@"
+
+if   source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null || \
+     source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null
+then main "$@"
+else echo "can not find pvm-common.sh.inc" && exit 1
+fi

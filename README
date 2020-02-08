@@ -26,6 +26,8 @@ the script will emit a warning and ask for confirmation to proceed.
 The creation can be influenced by providing one or more of the following
 options to pvmbootstrap:
 
+  -b <base-set>  -- Select one of the pre-defined package-sets described below
+                    (default: 'standard')
   -H <hook>      -- Enable a hook to customize the created image. This can be
                     the path to a custom script, or one of the predefined hooks
                     described below. The VM will boot the newly created image,
@@ -39,16 +41,21 @@ options to pvmbootstrap:
   -O             -- Bootstrap an openrc system instead of a systemd one
   -p <package>   -- Specify additional packages to be installed in the VM image.
                     This option can be specified multiple times.
-  -s <img_size>  -- Set the size (in GB) of the VM image (minimum: 1, default: 64)
+  -s <root_size> -- Set the size (in MB) of the root partition (default: 32000).
+                    If this is 0 (or less than the <base-set> requires),
+                    the VM image will be the smallest size possible,
+                    fit to the <base-set>; and any -p <package> will be ignored.
   -S <swap_size> -- Set the size (in MB) of the swap partition (default: 0)
 
-The creation hooks currently supported are:
+Pre-defined package-sets:
+  minimal:          base
+  standard:         base parabola-base
+  devel:            base parabola-base base-devel
 
-'ethernet-dhcp':
-
-  This hook will setup ethernet in the VM by enabling systemd-resolved and
-  openresolv properly, as well as creating and enabling a systemd-networkd
-  configuration.
+Pre-defined hooks:
+  ethernet-dhcp:    This hook will setup ethernet in the VM by enabling
+                    systemd-resolved and openresolv properly, as well as creating
+                    and enabling a systemd-networkd configuration. (systemd only)
 
 
 --------------------
@@ -59,10 +66,23 @@ To boot a created virtual machine, run:
 
   $> pvmboot [options] <path_to_image> [qemu-args ...]
 
-The script will attempt to determine the architecture of the provided virtual
-machine image, and set the qemu executable and sane default flags for the qemu
-invocation automatically, including kvm acceleration, if available for the
-target architecture.
+The script will attempt to determine the architecture and partition layout
+of the provided virtual machine image, and set the qemu executable and sane
+default flags for the qemu invocation automatically; and will enable KVM
+acceleration, if available for the target architecture.
+
+The pvmbootstrap script creates a boot partition formatted with either the
+vfat or ext2 filesystems, and a root partition formatted with the ext4
+filesystems. If the specified image was not created using pvmbootstrap, the
+partition detection will fail unless the image coforms to this expected schema.
+The first vfat or ext2 filesystem detected, will be considered as the boot
+partition; and the first ext4 filesystem detected, will be considered as the
+root partition.
+
+The default kernel installed by pvmbootstrap is 'linux-libre'.
+The -k option ca be used to specify an alternate kernel to boot.
+
+  $> pvmboot -k linux-libre-lts ./an.img
 
 Additionally, the script will evaluate the DISPLAY environment variable to
 determine whether a graphical desktop environment is available, and will start
@@ -71,12 +91,7 @@ unsetting DISPLAY before executing the script:
 
   $> DISPLAY= pvmboot ./an.img
 
-The default kernel installed by pvmbootstrap is 'linux-libre'.
-The -k option ca be used to specify an alternate kernel to boot.
-
-  $> pvmboot -k linux-libre-lts ./an.img
-
-When the VM will boot into graphical mode, the serial console can be redirected
+If qemu boots into graphical mode, the serial console can be redirected
 to the host console by passing the -r option.
 
   $> pvmboot -r ./an.img
@@ -104,5 +119,5 @@ pvmbootstrap always creates a /boot partition.
 for example, to generate the parabola armv7h release tarball:
 
   $> img_filename=parabola-systemd-cli-armv7h-tarball-$(date +%Y.%m).img
-  $> pvmbootstrap -s 1 -H ethernet-dhcp $img_filename armv7h
-  $> pvm2tarball $img_filename
+  $> pvmbootstrap -b minimal -H ethernet-dhcp -s 0 -S0 $img_file armv7h
+  $> pvm2tarball $img_file
