@@ -135,60 +135,43 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   sudo dd if=/dev/zero of="$loopdev" bs=1M count=8 || return "$EXIT_FAILURE"
 
   # partition
-  local boot_begin="$( [[ "$arch" =~ i686|x86_64 ]] && echo 2 || echo 1 )MiB"
+  local bios_grub_begin="1MiB"
+  local bios_grub_end="2MiB"
+  local boot_begin=${bios_grub_end}
   local boot_end="$(( ${boot_begin/MiB} + $BootSizeMb ))MiB"
   local swap_begin=${boot_end}
   local swap_end="$(( ${swap_begin/MiB} + $SwapSizeMb ))MiB"
   local root_begin=${swap_end}
-  local legacy_part boot_label boot_fs_type boot_flag
+  local boot_label boot_fs_type
   case "$arch" in
-    i686|x86_64)
-        legacy_part='mkpart primary 1MiB 2Mib'
-        boot_label='primary'
-        boot_fs_type='ext2'
-        boot_flag='bios_grub'                   ;; # legacy_part
-    armv7h)
-        boot_label='ESP'
-        boot_fs_type='fat32'
-        boot_flag='boot'                        ;;
-    ppc64le|riscv64)
-        boot_label='primary'
-        boot_fs_type='ext2'
-        boot_flag='boot'                        ;;
+    armv7h) boot_label='ESP'     ; boot_fs_type='fat32' ;;
+    *     ) boot_label='primary' ; boot_fs_type='ext2'  ;;
   esac
   local swap_label='primary'
   local root_label='primary'
-  local swap_part=$( (( $HasSwap )) && echo "mkpart $swap_label linux-swap $swap_begin $swap_end")
+  local swap_part="mkpart $swap_label linux-swap $swap_begin $swap_end"
   msg "partitioning blank image"
   sudo parted -s "$loopdev"                                \
     mklabel gpt                                            \
-    $legacy_part                                           \
+    mkpart primary $bios_grub_begin $bios_grub_end         \
+    set 1 bios_grub on                                     \
     mkpart $boot_label $boot_fs_type $boot_begin $boot_end \
-    set 1 $boot_flag on                                    \
-    $swap_part                                             \
+    set 2 boot on                                          \
+    $( (( $HasSwap )) && echo $swap_part )                 \
     mkpart $root_label ext4 $root_begin 100%               || return "$EXIT_FAILURE"
 
   # refresh partition data
   sudo partprobe "$loopdev"
 
   # make file systems
-  local boot_mkfs_cmd boot_loopdev swap_loopdev root_loopdev
+  local boot_mkfs_cmd
+  local boot_loopdev="$loopdev"p2
+  local swap_loopdev="$loopdev"p3
+  local root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 4 || echo 3 )
   case "$arch" in
-    i686|x86_64)
-      boot_mkfs_cmd='mkfs.ext2'
-      boot_loopdev="$loopdev"p2
-      swap_loopdev="$loopdev"p3
-      root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 4 || echo 3 ) ;;
-    armv7h)
-      boot_mkfs_cmd='mkfs.vfat -F 32'
-      boot_loopdev="$loopdev"p1
-      swap_loopdev="$loopdev"p2
-      root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 3 || echo 2 ) ;;
-    ppc64le|riscv64)
-      boot_mkfs_cmd='mkfs.ext2'
-      boot_loopdev="$loopdev"p1
-      swap_loopdev="$loopdev"p2
-      root_loopdev="$loopdev"p$( (( $HasSwap )) && echo 3 || echo 2 ) ;;
+    armv7h         ) boot_mkfs_cmd='mkfs.vfat -F 32' ;;
+    i686|x86_64    ) boot_mkfs_cmd='mkfs.ext2'       ;;
+    ppc64le|riscv64) boot_mkfs_cmd='mkfs.ext2'       ;;
   esac
   msg "creating target filesystems"
   sudo $boot_mkfs_cmd "$boot_loopdev" || return "$EXIT_FAILURE"
