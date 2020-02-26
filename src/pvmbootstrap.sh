@@ -239,11 +239,14 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   msg "installing packages into the work chroot"
   sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"        || return "$EXIT_FAILURE"
   sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkgs_cached[@]}" || return "$EXIT_FAILURE"
-  msg2 "creating a list of installed packages"
-  pacman -Sl -r "$workdir/" --config "$pacconf"   | \
-  awk '/\[installed\]$/ {print $1 "/" $2 "-" $3}' > $(dirname $imagefile)/pkglist.txt
 
-  # create an fstab
+  # generate list of installed packages
+  msg2 "generating a list of installed packages"
+  local pkglist_awk_prog='/\[installed\]$/ {print $1 "/" $2 "-" $3}'
+  local pkglist_file=$(dirname $imagefile)/pkglist.txt
+  pacman -Sl -r "$workdir/" --config "$pacconf" | awk "$pkglist_awk_prog" > $pkglist_file
+
+  # generate an fstab
   msg "generating /etc/fstab"
   case "$arch" in
     riscv64)                                                        ;;
@@ -402,7 +405,7 @@ pvm_bootstrap_preinit() # assumes: $imagefile
   return $res
 }
 
-pvm_bootstrap_cleanup() # sets: $pacconf , untraps: INT TERM RETURN
+pvm_bootstrap_cleanup() # unsets: $pacconf , untraps: INT TERM RETURN
 {
   trap - INT TERM RETURN
 
