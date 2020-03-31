@@ -394,8 +394,8 @@ pvm_bootstrap_preinit() # assumes: $imagefile
   pvm_check_no_mounts || return "$EXIT_FAILURE"
 
   # boot the machine to run the pre-init hooks
-  [[ "$(pvm_get_pvmboot_cmd)" ]] && msg "booting the VM to run the pre-init hooks" || \
-                                    warning "unable to run pre-init hooks"
+  [[ "$(pvm_get_script 'pvmboot')" ]] && msg "booting the VM to run the pre-init hooks" || \
+                                         warning "unable to run pre-init hooks"
   exec 3>&1
   pvm_boot "$imagefile" | tee /dev/fd/3 | grep -q -F "$PVM_HOOKS_SUCCESS_MSG"
   local res=$?

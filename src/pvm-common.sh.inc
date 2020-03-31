@@ -9,14 +9,15 @@ readonly MOUNTVARS_ERR_MSG="FIXME: pvm_setup_loopdev() was called in an improper
 source "$(librelib messages)"
 
 
-pvm_get_pvmboot_cmd()
+pvm_get_script() # (script_name)
 {
-  local intree_cmd=$THIS_DIR/pvmboot.sh
-  local installed_cmd='pvmboot'
+  local script_name=$1
+  local intree_script=$THIS_DIR/$script_name.sh
+  local installed_script=$script_name
 
-  [[ -f "$intree_cmd" ]]             && echo "$intree_cmd"           && return "$EXIT_SUCCESS"
-  type -p $installed_cmd &>/dev/null && echo "$installed_cmd"        && return "$EXIT_SUCCESS"
-                                        error "can not find pvmboot" && return "$EXIT_FAILURE"
+  [[ -f "$intree_script" ]]             && echo "$intree_script"                && return "$EXIT_SUCCESS"
+  type -p $installed_script &>/dev/null && echo "$installed_script"             && return "$EXIT_SUCCESS"
+                                           error "can not find $script_name" && return "$EXIT_FAILURE"
 }
 
 pvm_get_hook() # ( hook_name )
@@ -253,12 +254,12 @@ pvm_boot() # ( imagefile qemu_args )
 {
   local imagefile="$1" ; shift ;
   local qemu_args=(-no-reboot $@)
-  local pvmboot_cmd=$(pvm_get_pvmboot_cmd)
+  local pvmboot_script=$(pvm_get_script 'pvmboot')
   local was_error=$?
 
-  [[ "$pvmboot_cmd" ]] || return $EXIT_FAILURE
+  [[ "$pvmboot_script" ]] || return $EXIT_FAILURE
 
-  DISPLAY='' "$pvmboot_cmd" "$imagefile" "${qemu_args[@]}" ; was_error=$? ;
+  DISPLAY='' "$pvmboot_script" "$imagefile" "${qemu_args[@]}" ; was_error=$? ;
 
   (( ! $was_error )) && return $EXIT_SUCCESS || return $EXIT_FAILURE
 }
