@@ -75,16 +75,17 @@ usage()
   echo
   echo  "Supported options:"
   echo  "  -b <base-set>   Select one of the pre-defined package-sets described below"
-  echo  "                  (default: 'standard')"
+  echo  "                  (default: '$PKG_SET_STD')"
   echo  "  -h              Display this help and exit"
   echo  "  -H <hook>       Enable a hook to customize the created image. This can be"
   echo  "                  the path to a script, which will be executed once within"
   echo  "                  the running VM, or one of the pre-defined hooks described"
   echo  "                  below. This option can be specified multiple times."
-  echo  "  -k <kernel>     Specify an additional kernel package (default: $DEF_KERNEL)."
+  echo  "  -k <kernel>     Specify a kernel package (default: ''). "
   echo  "                  This option can be specified multiple times; but note that"
   echo  "                  '$DEF_KERNEL' will be installed as part of the '$PKG_SET_STD' and"
-  echo  "                  '$PKG_SET_DEV' package sets, regardless of this option."
+  echo  "                  '$PKG_SET_DEV' package sets, regardless of this option,"
+  echo  "                  and no kernel is installed as part of the '$PKG_SET_MIN' package set."
   echo  "  -M <mirror>     Specify a different mirror from which to fetch packages"
   echo  "                  (default: $DEF_MIRROR)"
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
@@ -120,14 +121,14 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   mkdir -p "$(dirname "$imagefile")"   || return "$EXIT_FAILURE"
   pvm_prompt_clobber_file "$imagefile" || return "$EXIT_FAILURE"
 
-  msg "starting build for %s image: %s" "$arch" "$imagefile"
-
-  # create the raw image file
-  local img_mb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
-  qemu-img create -f raw "$imagefile" "${img_mb}M" || return "$EXIT_FAILURE"
-
   # prepare for cleanup
   trap 'pvm_bootstrap_cleanup' INT TERM RETURN
+
+  local img_mb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
+  msg "starting build for %s image: %s (%sMB)" "$arch" "$imagefile" "$img_mb"
+
+  # create the raw image file
+  qemu-img create -f raw "$imagefile" "${img_mb}M" || return "$EXIT_FAILURE"
 
   # mount the virtual disk
   local bootdir workdir loopdev
@@ -468,7 +469,12 @@ main() # ( [cli_options] imagefile arch )
 
   # create the virtual machine
   if pvm_bootstrap; then
-    if pvm_bootstrap_preinit; then
+    if ! (( ${#Kernels[@]} )) ; then
+      msg "bootstrap complete for image: %s" "$imagefile"
+      warning "the preinit procedure was not run because no kernel was installed and no initcpio exists"
+      warning "the preinit procedure will run when the image is booted for the first time"
+      exit "$EXIT_SUCCESS"
+    elif pvm_bootstrap_preinit; then
       msg "bootstrap complete for image: %s" "$imagefile"
       exit "$EXIT_SUCCESS"
     else
@@ -482,8 +488,8 @@ main() # ( [cli_options] imagefile arch )
 }
 
 
-if   source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null || \
-     source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null
+if   source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null || \
+     source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null
 then main "$@"
 else echo "can not find pvm-common.sh.inc" && exit 1
 fi

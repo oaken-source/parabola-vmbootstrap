@@ -100,8 +100,8 @@ EOF
 }
 
 
-if   source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null || \
-     source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null
+if   source "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"/pvm-common.sh.inc 2> /dev/null || \
+     source /usr/lib/parabola-vmbootstrap/pvm-common.sh.inc                     2> /dev/null
 then main "$@"
 else echo "can not find pvm-common.sh.inc" && exit 1
 fi

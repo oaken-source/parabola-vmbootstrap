@@ -1,3 +1,25 @@
+#!/bin/bash
+###############################################################################
+#     parabola-vmbootstrap -- create and start parabola virtual machines      #
+#                                                                             #
+#     Copyright (C) 2017 - 2019  Andreas Grapentin                            #
+#     Copyright (C) 2019 - 2020  bill-auger                                   #
+#                                                                             #
+#     This program is free software: you can redistribute it and/or modify    #
+#     it under the terms of the GNU General Public License as published by    #
+#     the Free Software Foundation, either version 3 of the License, or       #
+#     (at your option) any later version.                                     #
+#                                                                             #
+#     This program is distributed in the hope that it will be useful,         #
+#     but WITHOUT ANY WARRANTY; without even the implied warranty of          #
+#     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the           #
+#     GNU General Public License for more details.                            #
+#                                                                             #
+#     You should have received a copy of the GNU General Public License       #
+#     along with this program.  If not, see <http://www.gnu.org/licenses/>.   #
+###############################################################################
+
+
 # readonly DATA_IMG=./pvmdata.img # optional large qemu disk
 readonly THIS_DIR="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
 readonly UNPRIVILEGED_ERR_MSG="This program must be run as a regular user"
@@ -15,8 +37,8 @@ pvm_get_script() # (script_name)
   local intree_script=$THIS_DIR/$script_name.sh
   local installed_script=$script_name
 
-  [[ -f "$intree_script" ]]             && echo "$intree_script"                && return "$EXIT_SUCCESS"
-  type -p $installed_script &>/dev/null && echo "$installed_script"             && return "$EXIT_SUCCESS"
+  [[ -f "$intree_script" ]]             && echo "$intree_script"             && return "$EXIT_SUCCESS"
+  type -p $installed_script &>/dev/null && echo "$installed_script"          && return "$EXIT_SUCCESS"
                                            error "can not find $script_name" && return "$EXIT_FAILURE"
 }
 
@@ -197,7 +219,8 @@ pvm_cleanup() # unsets: $loopdev , untraps: INT TERM EXIT
   trap - INT TERM EXIT
 
   pvm_umount
-  sudo losetup -d "$loopdev"
+
+  sudo losetup -d "$loopdev" &> /dev/null
   pvm_check_no_mounts || return "$EXIT_FAILURE"
 
   unset loopdev
