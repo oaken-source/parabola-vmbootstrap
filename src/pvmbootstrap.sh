@@ -296,9 +296,10 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
     msg "regenerating initcpio for kernel: '${kernel}'"
     sudo cp "$preset_file"{,.backup}                                 || return "$EXIT_FAILURE"
     echo "$default_options" | sudo tee -a "$preset_file" > /dev/null || return "$EXIT_FAILURE"
-    # regenerating the initcpio currently produces a benign error:
-    # https://bugs.archlinux.org/task/65725
-    sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}             #|| return "$EXIT_FAILURE"
+# FIXME: regenerating the initcpio currently produces a benign error:
+#        https://bugs.archlinux.org/task/65725
+#     sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}              || return "$EXIT_FAILURE"
+    sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}
     sudo mv "$preset_file"{.backup,}                                 || return "$EXIT_FAILURE"
   done
 
