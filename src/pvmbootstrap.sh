@@ -86,11 +86,9 @@ usage()
   echo  "                  the path to a script, which will be executed once within"
   echo  "                  the running VM, or one of the pre-defined hooks described"
   echo  "                  below. This option can be specified multiple times."
-  echo  "  -k <kernel>     Specify a kernel package (default: ''). "
+  echo  "  -k <kernel>     Specify an additional kernel package (default: $DEF_KERNEL)."
   echo  "                  This option can be specified multiple times; but note that"
-  echo  "                  '$DEF_KERNEL' will be installed as part of the '$PKG_SET_STD' and"
-  echo  "                  '$PKG_SET_DEV' package sets, regardless of this option,"
-  echo  "                  and no kernel is installed as part of the '$PKG_SET_MIN' package set."
+  echo  "                  '$DEF_KERNEL' will be installed, regardless of this option."
   echo  "  -M <mirror>     Specify a different mirror from which to fetch packages"
   echo  "                  (default: $DEF_MIRROR)"
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
@@ -438,14 +436,12 @@ main() # ( [cli_options] imagefile arch )
   # parse options
   while getopts 'b:hH:k:M:Op:s:S:' arg; do
     case "$arg" in
-      b) case $OPTARG in $PKG_SET_MIN) BasePkgSet=$OPTARG                             ;
-                                       Pkgs=(${MIN_PKGS[@]}) ; MinRootMb=$ROOT_MB_MIN ;;
-                         $PKG_SET_STD) BasePkgSet=$OPTARG    ; Kernels+=($DEF_KERNEL) ;
-                                       Pkgs=(${STD_PKGS[@]}) ; MinRootMb=$ROOT_MB_STD ;;
-                         $PKG_SET_DEV) BasePkgSet=$OPTARG    ; Kernels+=($DEF_KERNEL) ;
-                                       Pkgs=(${DEV_PKGS[@]}) ; MinRootMb=$ROOT_MB_DEV ;;
-                         *           ) warning "invalid base set: %s" "$OPTARG"       ;;
-         esac                                                                           ;;
+      b) case $OPTARG in
+         $PKG_SET_MIN) BasePkgSet=$OPTARG ; Pkgs=(${MIN_PKGS[@]}) ; MinRootMb=$ROOT_MB_MIN ;;
+         $PKG_SET_STD) BasePkgSet=$OPTARG ; Pkgs=(${STD_PKGS[@]}) ; MinRootMb=$ROOT_MB_STD ;;
+         $PKG_SET_DEV) BasePkgSet=$OPTARG ; Pkgs=(${DEV_PKGS[@]}) ; MinRootMb=$ROOT_MB_DEV ;;
+         *           ) warning "invalid base set: %s" "$OPTARG"                            ;;
+         esac                                                                              ;;
       c) PkgsCached+=($OPTARG)                                                          ;;
       h) usage; return "$EXIT_SUCCESS"                                                  ;;
       H) Hooks+=( "$(pvm_get_hook $OPTARG)" )                                           ;;
@@ -482,12 +478,7 @@ main() # ( [cli_options] imagefile arch )
 
   # create the virtual machine
   if pvm_bootstrap; then
-    if ! (( ${#Kernels[@]} )) ; then
-      msg "bootstrap complete for image: %s" "$imagefile"
-      warning "the preinit procedure was not run because no kernel was installed and no initcpio exists"
-      warning "the preinit procedure will run when the image is booted for the first time"
-      exit "$EXIT_SUCCESS"
-    elif pvm_bootstrap_preinit; then
+    if pvm_bootstrap_preinit; then
       msg "bootstrap complete for image: %s" "$imagefile"
       exit "$EXIT_SUCCESS"
     else
