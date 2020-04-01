@@ -27,25 +27,31 @@ The creation can be influenced by providing one or more of the following
 options to pvmbootstrap:
 
   -b <base-set>  -- Select one of the pre-defined package-sets described below
-                    (default: 'standard')
+                    (default: standard)
+  -c <package>   -- Specify a package to store in the image pacman cache.
+                    This option does not implcitly install the package.
+                    This option can be specified multiple times;
+                    but note that these will be ignored if -s <root_size> is 0.
   -H <hook>      -- Enable a hook to customize the created image. This can be
                     the path to a custom script, or one of the predefined hooks
                     described below. The VM will boot the newly created image,
                     and the hook script(s) will be executed once each within
                     the running VM. This option can be specified multiple times.
-  -k <kernel>    -- Choose an additional kernel package (default: linux-libre).
+  -k <kernel>    -- Specify an additional kernel package (default: linux-libre).
                     This option can be specified multiple times; but note that
                     'linux-libre' will be installed, regardless of this option.
   -M <mirror>    -- Set the mirror from which to fetch packages
                     (default: https://repo.parabola.nu/$repo/os/$arch)
   -O             -- Bootstrap an openrc system instead of a systemd one
-  -p <package>   -- Specify additional packages to be installed in the VM image.
-                    This option can be specified multiple times.
+  -p <package>   -- Specify an additional package to be installed in the image.
+                    This option can be specified multiple times;
+                    but note that these will be ignored if -s <root_size> is 0.
   -s <root_size> -- Set the size (in MB) of the root partition (default: 32000).
                     If this is 0 (or less than the <base-set> requires),
                     the VM image will be the smallest size possible,
                     fit to the <base-set>; and any -p <package> will be ignored.
-  -S <swap_size> -- Set the size (in MB) of the swap partition (default: 0)
+  -S <swap_size> -- Set the size (in MB) of the swap partition (default: 0).
+                    If this is 0, no swap partition will be created.
 
 Pre-defined package-sets:
   minimal:          base

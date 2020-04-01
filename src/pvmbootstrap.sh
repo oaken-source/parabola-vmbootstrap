@@ -33,15 +33,15 @@ readonly DEF_MIRROR=https://repo.parabola.nu
 readonly DEF_ROOT_MB=32000
 readonly DEF_BOOT_MB=100
 readonly DEF_SWAP_MB=0
-readonly MANDATORY_PKGS_ALL=(                            )
-readonly MANDATORY_PKGS_armv7h=(  haveged net-tools      )
-readonly MANDATORY_PKGS_i686=(    haveged net-tools grub )
-readonly MANDATORY_PKGS_ppc64le=( haveged net-tools      )
-readonly MANDATORY_PKGS_riscv64=(                        )
-readonly MANDATORY_PKGS_x86_64=(  haveged net-tools grub )
+readonly PKGS_MANDATORY_ALL=(                            )
+readonly PKGS_MANDATORY_armv7h=(  haveged net-tools      )
+readonly PKGS_MANDATORY_i686=(    haveged net-tools grub )
+readonly PKGS_MANDATORY_ppc64le=( haveged net-tools      )
+readonly PKGS_MANDATORY_riscv64=(                        )
+readonly PKGS_MANDATORY_x86_64=(  haveged net-tools grub )
 
 # misc
-readonly GUEST_CACHED_PKGS=('ca-certificates-utils')
+readonly PKGS_GUEST_CACHED=('ca-certificates-utils')
 readonly PVM_HOOKS_SUCCESS_MSG="[hooks.sh] pre-init hooks successful"
 
 # options
@@ -52,8 +52,8 @@ Kernels=($DEF_KERNEL)
 Mirror=$DEF_MIRROR
 IsNonsystemd=0
 Pkgs=(${DEF_PKGS[@]})
-PkgsCached=(${GUEST_CACHED_PKGS[@]})
-OptPkgs=()
+PkgsCached=(${PKGS_GUEST_CACHED[@]})
+PkgsOptional=()
 RootSizeMb=$DEF_ROOT_MB
 BootSizeMb=$DEF_BOOT_MB
 SwapSizeMb=$DEF_SWAP_MB
@@ -76,7 +76,7 @@ usage()
   echo
   echo  "Supported options:"
   echo  "  -b <base-set>   Select one of the pre-defined package-sets described below"
-  echo  "                  (default: '$PKG_SET_STD')"
+  echo  "                  (default: $PKG_SET_STD)"
   echo  "  -c <package>    Specify a package to store in the image pacman cache."
   echo  "                  This option does not implcitly install the package."
   echo  "                  This option can be specified multiple times;"
@@ -94,14 +94,15 @@ usage()
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
   echo  "                  NOTE: This option is currently ignored; because"
   echo  "                        the 'preinit' hook is implemented as a systemd service."
-  echo  "  -p <package>    Specify an additional package to be installed in the VM image."
+  echo  "  -p <package>    Specify an additional package to be installed in the image."
   echo  "                  This option can be specified multiple times;"
   echo  "                  but note that these will be ignored if -s <root_size> is 0."
   echo  "  -s <root_size>  Set the size (in MB) of the root partition (default: $DEF_ROOT_MB)."
   echo  "                  If this is 0 (or less than the <base-set> requires),"
   echo  "                  the VM image will be the smallest size possible,"
   echo  "                  fit to the <base-set>; and any -p <package> will be ignored."
-  echo  "  -S <swap_size>  Set the size (in MB) of the swap partition (default: $DEF_SWAP_MB)"
+  echo  "  -S <swap_size>  Set the size (in MB) of the swap partition (default: $DEF_SWAP_MB)."
+  echo  "                  If this is 0, no swap partition will be created."
   echo
   echo  "Pre-defined package-sets:"
   print "  $PKG_SET_MIN:%$((15 - ${#PKG_SET_MIN}))s${MIN_PKGS[*]}" ""
@@ -127,11 +128,10 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   # prepare for cleanup
   trap 'pvm_bootstrap_cleanup' INT TERM RETURN
 
-  local img_mb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
-  msg "starting build for %s image: %s (%sMB)" "$arch" "$imagefile" "$img_mb"
+  msg "starting build for %s image: %s (%sMB)" "$arch" "$imagefile" "$ImgSizeMb"
 
   # create the raw image file
-  qemu-img create -f raw "$imagefile" "${img_mb}M" || return "$EXIT_FAILURE"
+  qemu-img create -f raw "$imagefile" "${ImgSizeMb}M" || return "$EXIT_FAILURE"
 
   # mount the virtual disk
   local bootdir workdir loopdev
@@ -219,26 +219,6 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   for repo in ${repos[@]};    do echo "[$repo]"                           >> "$pacconf";
       for mirror_n in {1..5}; do echo "Server = $Mirror/\$repo/os/\$arch" >> "$pacconf"; done;
   done
-
-  # prepare package lists
-  local kernels=(     ${Kernels[@]}                                                   )
-  local pkgs=(        ${Pkgs[@]} ${Kernels[@]} ${OptPkgs[@]} ${MANDATORY_PKGS_ALL[@]} )
-  local pkgs_cached=( ${PkgsCached[@]}                                                )
-  case "$arch" in
-    armv7h ) pkgs+=( ${MANDATORY_PKGS_armv7h[@]}  ) ;;
-    i686   ) pkgs+=( ${MANDATORY_PKGS_i686[@]}    ) ;;
-    ppc64le) pkgs+=( ${MANDATORY_PKGS_ppc64le[@]} ) ;;
-    riscv64) pkgs+=( ${MANDATORY_PKGS_riscv64[@]} ) ;;
-    x86_64 ) pkgs+=( ${MANDATORY_PKGS_x86_64[@]}  ) ;;
-  esac
-  ((   $IsNonsystemd )) && [[ "$BasePkgSet" == "$PKG_SET_MIN"        ]] && pkgs+=(libelogind)
-  (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd)
-
-  # minimize package lists
-  local kernel ; local pkg ; Kernels=() ; Pkgs=() ; PkgsCached=() ;
-  for kernel in $(printf "%s\n" "${kernels[@]}"     | sort -u) ; do Kernels+=($kernel) ; done ;
-  for pkg    in $(printf "%s\n" "${pkgs[@]}"        | sort -u) ; do Pkgs+=($pkg)       ; done ;
-  for pkg    in $(printf "%s\n" "${pkgs_cached[@]}" | sort -u) ; do PkgsCached+=($pkg) ; done ;
 
   # pacstrap! :)
   msg "installing packages into the work chroot"
@@ -442,16 +422,16 @@ main() # ( [cli_options] imagefile arch )
          $PKG_SET_DEV) BasePkgSet=$OPTARG ; Pkgs=(${DEV_PKGS[@]}) ; MinRootMb=$ROOT_MB_DEV ;;
          *           ) warning "invalid base set: %s" "$OPTARG"                            ;;
          esac                                                                              ;;
-      c) PkgsCached+=($OPTARG)                                                          ;;
-      h) usage; return "$EXIT_SUCCESS"                                                  ;;
-      H) Hooks+=( "$(pvm_get_hook $OPTARG)" )                                           ;;
-      k) Kernels+=($OPTARG)                                                             ;;
-      M) Mirror="$OPTARG"                                                               ;;
-      O) IsNonsystemd=0                                                                 ;; # TODO:
-      p) OptPkgs+=($OPTARG)                                                             ;;
-      s) RootSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)"                                   ;;
-      S) SwapSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)"                                   ;;
-      *) error "invalid option: '%s'" "$arg" ; usage >&2 ; exit "$EXIT_INVALIDARGUMENT" ;;
+      c) PkgsCached+=($OPTARG)                                                             ;;
+      h) usage; return "$EXIT_SUCCESS"                                                     ;;
+      H) Hooks+=( "$(pvm_get_hook $OPTARG)" )                                              ;;
+      k) Kernels+=($OPTARG)                                                                ;;
+      M) Mirror="$OPTARG"                                                                  ;;
+      O) IsNonsystemd=0                                                                    ;; # TODO:
+      p) PkgsOptional+=($OPTARG)                                                           ;;
+      s) RootSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)"                                      ;;
+      S) SwapSizeMb="$(sed 's|[^0-9]||g' <<<$OPTARG)"                                      ;;
+      *) error "invalid option: '%s'" "$arg" ; usage >&2 ; exit "$EXIT_INVALIDARGUMENT"    ;;
     esac
   done
   local shiftlen=$(( OPTIND - 1 ))
@@ -460,11 +440,33 @@ main() # ( [cli_options] imagefile arch )
   local arch="$2"
   (( $# < 2 )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
 
+  # vaidate options and calculate options-dependent vars
   (( $RootSizeMb > 0          )) && \
-  (( $RootSizeMb < $MinRootMb )) && warning "specified root FS size too small - ignoring OptPkgs"
-  (( $RootSizeMb < $MinRootMb )) && RootSizeMb=$MinRootMb && OptPkgs=()
+  (( $RootSizeMb < $MinRootMb )) && warning "specified root FS size too small - ignoring PkgsOptional"
+  (( $RootSizeMb < $MinRootMb )) && RootSizeMb=$MinRootMb && PkgsOptional=()
   RootSizeMb=$(( $RootSizeMb + (${#Kernels[@]} * 75) ))
+  ImgSizeMb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
   HasSwap=$( (( $SwapSizeMb > 0 )) && echo 1 || echo 0 )
+
+  # prepare package lists
+  local kernels=(     ${Kernels[@]}                                                        )
+  local pkgs=(        ${Pkgs[@]} ${Kernels[@]} ${PkgsOptional[@]} ${PKGS_MANDATORY_ALL[@]} )
+  local pkgs_cached=( ${PkgsCached[@]}                                                     )
+  case "$arch" in
+    armv7h ) pkgs+=( ${PKGS_MANDATORY_armv7h[@]}  ) ;;
+    i686   ) pkgs+=( ${PKGS_MANDATORY_i686[@]}    ) ;;
+    ppc64le) pkgs+=( ${PKGS_MANDATORY_ppc64le[@]} ) ;;
+    riscv64) pkgs+=( ${PKGS_MANDATORY_riscv64[@]} ) ;;
+    x86_64 ) pkgs+=( ${PKGS_MANDATORY_x86_64[@]}  ) ;;
+  esac
+  ((   $IsNonsystemd )) && [[ "$BasePkgSet" == "$PKG_SET_MIN"        ]] && pkgs+=(libelogind)
+  (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd    )
+
+  # minimize package lists
+  local kernel ; local pkg ; Kernels=() ; Pkgs=() ; PkgsCached=() ;
+  for kernel in $(printf "%s\n" "${kernels[@]}"     | sort -u) ; do Kernels+=($kernel) ; done ;
+  for pkg    in $(printf "%s\n" "${pkgs[@]}"        | sort -u) ; do Pkgs+=($pkg)       ; done ;
+  for pkg    in $(printf "%s\n" "${pkgs_cached[@]}" | sort -u) ; do PkgsCached+=($pkg) ; done ;
 
   msg "making $arch image: $imagefile"
 
