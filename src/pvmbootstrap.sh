@@ -52,6 +52,7 @@ Kernels=($DEF_KERNEL)
 Mirror=$DEF_MIRROR
 IsNonsystemd=0
 Pkgs=(${DEF_PKGS[@]})
+PkgsCached=(${GUEST_CACHED_PKGS[@]})
 OptPkgs=()
 RootSizeMb=$DEF_ROOT_MB
 BootSizeMb=$DEF_BOOT_MB
@@ -76,6 +77,10 @@ usage()
   echo  "Supported options:"
   echo  "  -b <base-set>   Select one of the pre-defined package-sets described below"
   echo  "                  (default: '$PKG_SET_STD')"
+  echo  "  -c <package>    Specify a package to store in the image pacman cache."
+  echo  "                  This option does not implcitly install the package."
+  echo  "                  This option can be specified multiple times;"
+  echo  "                  but note that these will be ignored if -s <root_size> is 0."
   echo  "  -h              Display this help and exit"
   echo  "  -H <hook>       Enable a hook to customize the created image. This can be"
   echo  "                  the path to a script, which will be executed once within"
@@ -91,9 +96,9 @@ usage()
   echo  "  -O              Bootstrap an openrc system instead of a systemd one"
   echo  "                  NOTE: This option is currently ignored; because"
   echo  "                        the 'preinit' hook is implemented as a systemd service."
-  echo  "  -p <package>    Specify additional packages to be installed in the VM image."
-  echo  "                  This option can be specified multiple times."
-  echo  "                  Note that these will be ignored if -s <root_size> is 0."
+  echo  "  -p <package>    Specify an additional package to be installed in the VM image."
+  echo  "                  This option can be specified multiple times;"
+  echo  "                  but note that these will be ignored if -s <root_size> is 0."
   echo  "  -s <root_size>  Set the size (in MB) of the root partition (default: $DEF_ROOT_MB)."
   echo  "                  If this is 0 (or less than the <base-set> requires),"
   echo  "                  the VM image will be the smallest size possible,"
@@ -220,7 +225,7 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   # prepare package lists
   local kernels=(     ${Kernels[@]}                                                   )
   local pkgs=(        ${Pkgs[@]} ${Kernels[@]} ${OptPkgs[@]} ${MANDATORY_PKGS_ALL[@]} )
-  local pkgs_cached=( ${GUEST_CACHED_PKGS[@]}                                         )
+  local pkgs_cached=( ${PkgsCached[@]}                                                )
   case "$arch" in
     armv7h ) pkgs+=( ${MANDATORY_PKGS_armv7h[@]}  ) ;;
     i686   ) pkgs+=( ${MANDATORY_PKGS_i686[@]}    ) ;;
@@ -232,14 +237,17 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
   (( ! $IsNonsystemd )) && [[ "${Hooks[@]}" =~ hook-ethernet-dhcp.sh ]] && pkgs+=(dhcpcd)
 
   # minimize package lists
-  Kernels=() ; Pkgs=() ;
-  for kernel in $(printf "%s\n" "${kernels[@]}" | sort -u) ; do Kernels+=($kernel) ; done ;
-  for pkg    in $(printf "%s\n" "${pkgs[@]}"    | sort -u) ; do Pkgs+=($pkg)       ; done ;
+  local kernel ; local pkg ; Kernels=() ; Pkgs=() ; PkgsCached=() ;
+  for kernel in $(printf "%s\n" "${kernels[@]}"     | sort -u) ; do Kernels+=($kernel) ; done ;
+  for pkg    in $(printf "%s\n" "${pkgs[@]}"        | sort -u) ; do Pkgs+=($pkg)       ; done ;
+  for pkg    in $(printf "%s\n" "${pkgs_cached[@]}" | sort -u) ; do PkgsCached+=($pkg) ; done ;
 
   # pacstrap! :)
   msg "installing packages into the work chroot"
-  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${pkgs[@]}"        || return "$EXIT_FAILURE"
-  sudo pacstrap -GM  -C "$pacconf" "$workdir" "${pkgs_cached[@]}" || return "$EXIT_FAILURE"
+  sudo pacstrap -GMc -C "$pacconf" "$workdir" "${Pkgs[@]}"           || return "$EXIT_FAILURE"
+  sudo pacman -Sw --config "$pacconf" --root "$workdir"              \
+              --cachedir "$workdir"/var/cache/pacman/pkg --noconfirm \
+              "${PkgsCached[@]}"                                     || return "$EXIT_FAILURE"
 
   # generate list of installed packages
   msg2 "generating a list of installed packages"
@@ -438,6 +446,7 @@ main() # ( [cli_options] imagefile arch )
                                        Pkgs=(${DEV_PKGS[@]}) ; MinRootMb=$ROOT_MB_DEV ;;
                          *           ) warning "invalid base set: %s" "$OPTARG"       ;;
          esac                                                                           ;;
+      c) PkgsCached+=($OPTARG)                                                          ;;
       h) usage; return "$EXIT_SUCCESS"                                                  ;;
       H) Hooks+=( "$(pvm_get_hook $OPTARG)" )                                           ;;
       k) Kernels+=($OPTARG)                                                             ;;
