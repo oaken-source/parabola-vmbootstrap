@@ -48,7 +48,7 @@ readonly PVM_HOOKS_SUCCESS_MSG="[hooks.sh] pre-init hooks successful"
 BasePkgSet=$DEF_PKG_SET
 MinRootMb=$DEF_MIN_MB
 Hooks=()
-Kernels=()
+Kernels=($DEF_KERNEL)
 Mirror=$DEF_MIRROR
 IsNonsystemd=0
 Pkgs=(${DEF_PKGS[@]})
@@ -310,7 +310,9 @@ pvm_bootstrap() # assumes: $arch $imagefile $loopdev $workdir , traps: INT TERM 
     msg "regenerating initcpio for kernel: '${kernel}'"
     sudo cp "$preset_file"{,.backup}                                 || return "$EXIT_FAILURE"
     echo "$default_options" | sudo tee -a "$preset_file" > /dev/null || return "$EXIT_FAILURE"
-    sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}              || return "$EXIT_FAILURE"
+    # regenerating the initcpio currently produces a benign error:
+    # https://bugs.archlinux.org/task/65725
+    sudo arch-chroot "$workdir" mkinitcpio -p ${kernel}             #|| return "$EXIT_FAILURE"
     sudo mv "$preset_file"{.backup,}                                 || return "$EXIT_FAILURE"
   done
 
@@ -341,10 +343,12 @@ for kernel in ${Kernels[@]} ; do mkinitcpio -p \$kernel ; done ;
 pacman -U --noconfirm /var/cache/pacman/pkg/ca-certificates-utils-*.pkg.tar.xz
 
 # run the hooks
+shopt -s nullglob
 for hook in /root/hooks/*; do
   echo "[hooks.sh] running hook: '\$(basename \$hook)'"
-  source "\$hook" || return
+  source "\$hook"
 done
+shopt -u nullglob
 
 # clean up after yourself
 systemctl disable preinit.service
@@ -449,7 +453,7 @@ main() # ( [cli_options] imagefile arch )
   shift $shiftlen
   local imagefile="$1"
   local arch="$2"
-  (( $# != 2 )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
+  (( $# < 2 )) && error "insufficient arguments" && usage >&2 && exit "$EXIT_INVALIDARGUMENT"
 
   (( $RootSizeMb > 0          )) && \
   (( $RootSizeMb < $MinRootMb )) && warning "specified root FS size too small - ignoring OptPkgs"
