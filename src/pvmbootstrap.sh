@@ -443,8 +443,8 @@ main() # ( [cli_options] imagefile arch )
 
   # vaidate options and calculate options-dependent vars
   (( $RootSizeMb > 0          )) && \
-  (( $RootSizeMb < $MinRootMb )) && warning "specified root FS size too small - ignoring PkgsOptional"
-  (( $RootSizeMb < $MinRootMb )) && RootSizeMb=$MinRootMb && PkgsOptional=()
+  (( $RootSizeMb < $MinRootMb )) && warning "specified root FS size too small - ignoring -c and -p packages"
+  (( $RootSizeMb < $MinRootMb )) && RootSizeMb=$MinRootMb PkgsCached=() PkgsOptional=()
   RootSizeMb=$(( $RootSizeMb + (${#Kernels[@]} * 75) ))
   ImgSizeMb=$(( $BootSizeMb + $SwapSizeMb + $RootSizeMb ))
   HasSwap=$( (( $SwapSizeMb > 0 )) && echo 1 || echo 0 )
