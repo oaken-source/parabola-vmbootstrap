@@ -16,5 +16,7 @@ DHCP=yes
 EOF
 
 # enable said network configuration
-systemctl enable systemd-networkd.service
-systemctl enable systemd-resolved.service
+systemctl enable --now systemd-networkd.service
+systemctl enable --now systemd-resolved.service
+
+ln -sf /var/run/systemd/resolve/resolv.conf /etc/resolv.conf
