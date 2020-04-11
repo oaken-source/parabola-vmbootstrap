@@ -331,9 +331,10 @@ pacman -U --noconfirm /var/cache/pacman/pkg/ca-certificates-utils-*.pkg.tar.xz
 
 # run the hooks
 shopt -s nullglob
-for hook in /root/hooks/*; do
-  echo "[hooks.sh] running hook: '\$(basename \$hook)'"
-  source "\$hook"
+for hook in ${Hooks[@]}; do
+  hook="\$(basename "\$hook")"
+  echo "[hooks.sh] running hook: '\$hook'"
+  source /root/hooks/"\$hook"
 done
 shopt -u nullglob
 
@@ -347,7 +348,6 @@ rm -f  /var/cache/pacman/pkg/*
 
 # report success :)
 echo "$PVM_HOOKS_SUCCESS_MSG - powering off"
-[[ -e "/usr/lib/libretools/common.sh" ]] && rm -f /usr/lib/libretools/common.sh
 EOF
 
   # create a pre-init service to run the hooks
